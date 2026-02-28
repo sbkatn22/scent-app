@@ -18,9 +18,9 @@ class Perfume(models.Model):
     )
     rating_count = models.PositiveIntegerField(null=True, blank=True)
     year = models.PositiveIntegerField(null=True, blank=True)
-    top = models.TextField(blank=True)  # top notes
-    middle = models.TextField(blank=True)  # middle notes
-    base = models.TextField(blank=True)  # base notes
+    top_note = models.JSONField(default=list, blank=True)  # list of strings
+    middle_note = models.JSONField(default=list, blank=True)  # list of strings
+    base_note = models.JSONField(default=list, blank=True)  # list of strings
     perfumer1 = models.CharField(max_length=255, blank=True)
     perfumer2 = models.CharField(max_length=255, blank=True)
     mainaccord1 = models.CharField(max_length=100, blank=True)
