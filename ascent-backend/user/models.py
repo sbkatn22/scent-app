@@ -8,9 +8,6 @@ class Profile(models.Model):
     profile_picture = models.URLField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    collection = models.ManyToManyField(
-        "perfumes.Perfume", related_name="collected_by", blank=True
-    )
 
     class Meta:
         db_table = "profiles"

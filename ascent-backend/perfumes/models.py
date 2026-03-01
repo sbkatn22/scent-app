@@ -3,6 +3,7 @@ Perfume/Fragrance model based on the fra_cleaned.csv dataset.
 Includes all fields from the dataset.
 """
 from django.db import models
+from user.models import Profile
 
 
 class Perfume(models.Model):
@@ -35,3 +36,31 @@ class Perfume(models.Model):
 
     def __str__(self):
         return f"{self.brand} - {self.perfume}"
+
+class PerfumeCollected(models.Model):
+
+    class FragranceType(models.TextChoices):
+        EDT = "EDT", "Eau de Toilette"
+        EDP = "EDP", "Eau de Parfum"
+        PARFUM = "PARFUM", "Parfum"
+        OTHER = "OTHER", "Other"
+
+    class PerfumeSize(models.TextChoices):
+        SAMPLE = "SAMPLE", "Sample"
+        DECANT = "DECANT", "Decant"
+        MINI = "MINI", "Mini"
+        BOTTLE = "BOTTLE", "Bottle"
+
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE)
+    perfume = models.ForeignKey(Perfume, on_delete=models.CASCADE)
+    perfume_type = models.CharField(max_length=100, choices=FragranceType.choices, default=FragranceType.EDT)
+    perfume_size = models.CharField(max_length=100, choices=PerfumeSize.choices, default=PerfumeSize.SAMPLE)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "perfume_collected"
+        unique_together = ["profile", "perfume"]
+
+    def __str__(self):
+        return f"{self.profile.username} - {self.perfume.perfume}"

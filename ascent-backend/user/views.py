@@ -155,6 +155,7 @@ def create(request):
         msg = str(e).lower()
         if any(x in msg for x in ["already", "exists", "registered"]):
             return JsonResponse({"error": "A user with this email already exists."}, status=400)
+        print(e)
         return JsonResponse({"error": "Could not create auth user."}, status=400)
 
     user = getattr(resp, "user", None) or (resp if isinstance(resp, dict) else {}).get("user")
@@ -241,7 +242,4 @@ def me(request):
             profile.profile_picture = (data.get("profile_picture") or "").strip()
         profile.save()
         return JsonResponse({"profile": _profile_to_dict(profile)})
-
-    # DELETE
-    profile.delete()
-    return JsonResponse({"ok": True}, status=200)
+    return JsonResponse({"error": "Invalid method."}, status=405)
