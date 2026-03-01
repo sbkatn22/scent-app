@@ -4,6 +4,7 @@ Includes all fields from the dataset.
 """
 from django.db import models
 from user.models import Profile
+from django.contrib.postgres.indexes import GinIndex
 
 
 class Perfume(models.Model):
@@ -60,6 +61,10 @@ class Perfume(models.Model):
     class Meta:
         db_table = "perfumes"
         ordering = ["-rating_count"]
+        indexes = [
+            GinIndex(fields=["brand"], name="brand_trgm", opclasses=["gin_trgm_ops"]),
+            GinIndex(fields=["perfume"], name="perfume_trgm", opclasses=["gin_trgm_ops"]),
+        ]
 
     def __str__(self):
         return f"{self.brand} - {self.perfume}"

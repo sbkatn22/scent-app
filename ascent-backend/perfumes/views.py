@@ -5,8 +5,10 @@ import json
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from datetime import timedelta
-from django.db.models import Q, Avg
+from django.db.models import Q, Avg, Value
+from django.contrib.postgres.search import TrigramSimilarity
 from django.core.paginator import Paginator, EmptyPage
+from django.db.models.functions import Concat
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import csrf_exempt
@@ -44,13 +46,17 @@ TTL_SECONDS = 32 * 24 * 60 * 60  # 32 days
 @require_GET
 def fragrance_search(request):
     search_term = request.GET.get("name", "").strip()
+    qs = Perfume.objects.all()
 
     if search_term:
-        qs = Perfume.objects.filter(
-            Q(perfume__icontains=search_term) | Q(brand__icontains=search_term)
-        )
-    else:
-        qs = Perfume.objects.all()
+        # Combine brand + perfume into one searchable field
+        qs = qs.annotate(
+            full_name=Concat("brand", Value(" "), "perfume"),
+            similarity=TrigramSimilarity("brand", search_term) +
+                       TrigramSimilarity("perfume", search_term)
+        ).filter(
+            similarity__gt=0.2  # threshold (tune this)
+        ).order_by("-similarity")
 
     total_count = qs.count()
     paginator = Paginator(qs, RESULTS_PER_PAGE)
@@ -62,34 +68,15 @@ def fragrance_search(request):
     except (ValueError, TypeError):
         page_number = 1
 
-    if paginator.num_pages == 0:
-        pagination = {
-            "page": 1,
-            "per_page": RESULTS_PER_PAGE,
-            "total_count": 0,
-            "total_pages": 0,
-            "has_next": False,
-            "has_previous": False,
-        }
-        results = []
-    else:
-        try:
-            page = paginator.page(page_number)
-        except EmptyPage:
-            page = paginator.page(paginator.num_pages)
-        pagination = {
-            "page": page.number,
-            "per_page": RESULTS_PER_PAGE,
-            "total_count": total_count,
-            "total_pages": paginator.num_pages,
-            "has_next": page.has_next(),
-            "has_previous": page.has_previous(),
-        }
-        results = [_fragrance_to_dict(p) for p in page.object_list]
+    try:
+        page = paginator.page(page_number)
+    except:
+        page = paginator.page(paginator.num_pages) if paginator.num_pages else []
+
+    results = [_fragrance_to_dict(p) for p in getattr(page, "object_list", [])]
 
     return JsonResponse({
         "count": len(results),
-        "pagination": pagination,
         "results": results,
     })
 
