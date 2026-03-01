@@ -21,6 +21,170 @@ Django backend for the scent app. Uses Supabase for auth. Login returns Supabase
 
 ---
 
+## Fragrance API (`/api/fragrances/`)
+
+Fragrance endpoints for searching/listing perfumes and creating new ones. Request bodies are JSON where applicable; responses are JSON.
+
+---
+
+### Search / list fragrances (GET)
+
+Search fragrances by name or brand with pagination. If no search term is provided, returns all fragrances (paginated).
+
+| Method | Path | Query params | Success | Error |
+|--------|------|--------------|---------|--------|
+| GET | `/api/fragrances/search/` | `name` (optional), `page` (optional) | `200` — `{ "count", "pagination", "results" }` | — |
+
+#### Query parameters
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `name` | string | No | Search term; case-insensitive partial match on fragrance name or brand. Omit to return all fragrances. |
+| `page` | integer | No | Page number (default: 1). Each page returns up to 10 results. |
+
+#### Example requests
+
+```http
+GET /api/fragrances/search/
+GET /api/fragrances/search/?name=rose
+GET /api/fragrances/search/?name=rose&page=1
+```
+
+#### Success response
+
+```json
+{
+  "count": 10,
+  "pagination": {
+    "page": 1,
+    "per_page": 10,
+    "total_count": 42,
+    "total_pages": 5,
+    "has_next": true,
+    "has_previous": false
+  },
+  "results": [
+    {
+      "id": 1,
+      "url": "https://...",
+      "fragrance": "Fragrance Name",
+      "brand": "Brand Name",
+      "country": "France",
+      "gender": "unisex",
+      "rating_value": "4.25",
+      "rating_count": 1500,
+      "year": 2020,
+      "top_note": ["Rose", "Bergamot"],
+      "middle_note": ["Jasmine", "Iris"],
+      "base_note": ["Musk", "Sandalwood"],
+      "perfumer1": "Perfumer Name",
+      "perfumer2": "",
+      "mainaccord1": "Floral",
+      "mainaccord2": "Woody",
+      "mainaccord3": "",
+      "mainaccord4": "",
+      "mainaccord5": ""
+    }
+  ]
+}
+```
+
+---
+
+### Create fragrance (POST)
+
+Creates a new fragrance. Send a JSON body with required fields and optional fields.
+
+| Method | Path | Body | Success | Error |
+|--------|------|------|---------|--------|
+| POST | `/api/fragrances/create/` | JSON (see below) | `201` — single fragrance object | `400` invalid JSON, missing required field, or creation failed |
+
+#### Request body
+
+**Required fields** (all must be non-empty strings):
+
+| Key | Type | Required |
+|-----|------|----------|
+| `url` | string | Yes |
+| `fragrance` | string | Yes |
+| `brand` | string | Yes |
+| `country` | string | Yes |
+| `gender` | string | Yes |
+
+**Optional fields:**
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `rating_value` | number or string | Decimal (e.g. 4.25) |
+| `rating_count` | integer | Positive integer |
+| `year` | integer | Release year |
+| `top_note` | array of strings | List of top notes |
+| `middle_note` | array of strings | List of middle notes |
+| `base_note` | array of strings | List of base notes |
+| `perfumer1` | string | Perfumer name |
+| `perfumer2` | string | Second perfumer |
+| `mainaccord1` … `mainaccord5` | string | Main accord labels |
+
+#### Example request
+
+```http
+POST /api/fragrances/create/
+Content-Type: application/json
+
+{
+  "url": "https://www.fragrantica.com/perfume/Brand/Name.html",
+  "fragrance": "Fragrance Name",
+  "brand": "Brand Name",
+  "country": "France",
+  "gender": "unisex",
+  "rating_value": 4.25,
+  "rating_count": 100,
+  "year": 2020,
+  "top_note": ["Rose", "Bergamot"],
+  "middle_note": ["Jasmine"],
+  "base_note": ["Musk"]
+}
+```
+
+#### Success response (201)
+
+Returns the created fragrance in the same shape as a single item in the search `results` array (see **Search / list fragrances** above).
+
+```json
+{
+  "id": 123,
+  "url": "https://...",
+  "fragrance": "Fragrance Name",
+  "brand": "Brand Name",
+  "country": "France",
+  "gender": "unisex",
+  "rating_value": "4.25",
+  "rating_count": 100,
+  "year": 2020,
+  "top_note": ["Rose", "Bergamot"],
+  "middle_note": ["Jasmine"],
+  "base_note": ["Musk"],
+  "perfumer1": "",
+  "perfumer2": "",
+  "mainaccord1": "",
+  "mainaccord2": "",
+  "mainaccord3": "",
+  "mainaccord4": "",
+  "mainaccord5": ""
+}
+```
+
+#### Error response (400)
+
+```json
+{ "error": "Invalid JSON body" }
+{ "error": "Missing required field: <field_name>" }
+{ "error": "Required fields cannot be empty" }
+{ "error": "Failed to create fragrance", "detail": "<message>" }
+```
+
+---
+
 ## User API (`/api/user/`)
 
 - **Login** returns `access_token`, `refresh_token`, and `expires_at` (if Supabase returns a session).
