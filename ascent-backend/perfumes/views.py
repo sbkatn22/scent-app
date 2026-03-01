@@ -324,8 +324,11 @@ def toggle_collection(request):
         perfume = Perfume.objects.get(id=perfume_id)
     except Perfume.DoesNotExist:
         return JsonResponse({"error": "Perfume not found"}, status=404)
-
-    collected, created = PerfumeCollected.objects.get_or_create(profile=profile, perfume=perfume)
+    perfume_size = body.get("size")
+    if perfume_size not in PerfumeCollected.PerfumeSize.values:
+        perfume_size = PerfumeCollected.PerfumeSize.BOTTLE
+    
+    collected, created = PerfumeCollected.objects.get_or_create(profile=profile, perfume=perfume, perfume_size=perfume_size)
     
     if not created:
         # Already exists → remove it

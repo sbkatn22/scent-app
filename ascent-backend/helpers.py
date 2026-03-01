@@ -81,7 +81,7 @@ def _profile_to_dict(profile):
         "profile_picture": profile.profile_picture or "",
         "created_at": profile.created_at.isoformat(),
         "updated_at": profile.updated_at.isoformat(),
-        "collection": [perfume_collected.perfume.id for perfume_collected in profile.collection.select_related("perfume").all()],
+        "collection": [{"id": perfume_collected.perfume.id, "size": perfume_collected.perfume_size, "added_on": perfume_collected.created_at} for perfume_collected in profile.collection.select_related("perfume").all()],
 
     }
 

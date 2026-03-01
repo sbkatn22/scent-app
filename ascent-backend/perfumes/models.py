@@ -72,11 +72,7 @@ class Perfume(models.Model):
 
 class PerfumeCollected(models.Model):
 
-    class FragranceType(models.TextChoices):
-        EDT = "EDT", "Eau de Toilette"
-        EDP = "EDP", "Eau de Parfum"
-        PARFUM = "PARFUM", "Parfum"
-        OTHER = "OTHER", "Other"
+
 
     class PerfumeSize(models.TextChoices):
         SAMPLE = "SAMPLE", "Sample"
@@ -88,22 +84,17 @@ class PerfumeCollected(models.Model):
         Profile, on_delete=models.CASCADE, related_name="collection"
     )
     perfume = models.ForeignKey(Perfume, on_delete=models.CASCADE)
-    perfume_type = models.CharField(
-        max_length=100,
-        choices=FragranceType.choices,
-        default=FragranceType.EDT,
-    )
     perfume_size = models.CharField(
         max_length=100,
         choices=PerfumeSize.choices,
-        default=PerfumeSize.SAMPLE,
+        default=PerfumeSize.BOTTLE,
     )
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "perfume_collected"
-        unique_together = ["profile", "perfume"]
+        unique_together = ["profile", "perfume", "perfume_size"]
 
     def __str__(self):
         return f"{self.profile.username} - {self.perfume.perfume}"
