@@ -40,7 +40,7 @@ def _profile_to_dict(profile):
         "profile_picture": profile.profile_picture or "",
         "created_at": profile.created_at.isoformat(),
         "updated_at": profile.updated_at.isoformat(),
-        "collection_ids": list(profile.collection.values_list("id", flat=True)),
+
     }
 
 

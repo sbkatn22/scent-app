@@ -51,7 +51,7 @@ class PerfumeCollected(models.Model):
         MINI = "MINI", "Mini"
         BOTTLE = "BOTTLE", "Bottle"
 
-    profile = models.ForeignKey(Profile, on_delete=models.CASCADE)
+    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="collection")
     perfume = models.ForeignKey(Perfume, on_delete=models.CASCADE)
     perfume_type = models.CharField(max_length=100, choices=FragranceType.choices, default=FragranceType.EDT)
     perfume_size = models.CharField(max_length=100, choices=PerfumeSize.choices, default=PerfumeSize.SAMPLE)
