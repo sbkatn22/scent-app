@@ -1,8 +1,7 @@
 """
-API views for the perfumes app (fragrance endpoints).
+API views for the perfumes app (fragrance endpoints + daily scent endpoints via Upstash REST)
 """
 import json
-import os
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 
@@ -12,41 +11,73 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import csrf_exempt
 
-from .models import Perfume
+from .models import Perfume, PerfumeCollected
+from user.models import Profile
 
-import redis
+from upstash_redis import Redis
+import os
+import uuid
+from user.supabase_client import get_supabase_admin
 
-# Default and maximum number of results per page for pagination
+
+# -------------------------
+# Pagination
+# -------------------------
 RESULTS_PER_PAGE = 10
 
 # -------------------------
-# Upstash Redis configuration
+# Upstash Redis REST client
 # -------------------------
-UPSTASH_REDIS_URL = os.environ.get("UPSTASH_REDIS_REST_URL")
-UPSTASH_REDIS_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
-
-redis_client = redis.Redis(
-    host=UPSTASH_REDIS_URL,
-    password=UPSTASH_REDIS_TOKEN,
-    decode_responses=True,
+redis = Redis(
+    url=os.environ.get("UPSTASH_REDIS_REST_URL"),
+    token=os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 )
-
 TTL_SECONDS = 32 * 24 * 60 * 60  # 32 days
 
 # -------------------------
 # Perfume serializers
 # -------------------------
+
+def _get_uid_from_bearer(request):
+    auth = request.META.get("HTTP_AUTHORIZATION")
+    if not auth or not auth.startswith("Bearer "):
+        return None, JsonResponse({"error": "Authorization header with Bearer token is required."}, status=401)
+    token = auth[7:].strip()
+    if not token:
+        return None, JsonResponse({"error": "Bearer token is required."}, status=401)
+
+    try:
+        admin = get_supabase_admin()
+        user_resp = admin.auth.get_user(token)
+        # user_resp is a UserResponse object; convert to dict safely
+        user_dict = user_resp.user.dict() if hasattr(user_resp.user, "dict") else {}
+        uid_value = user_dict.get("id")
+        uid = uuid.UUID(uid_value)
+        return uid, None
+    except Exception:
+        return None, JsonResponse({"error": "Invalid or expired token."}, status=401)
+
+def _profile_to_dict(profile):
+    return {
+        "id": profile.id,
+        "supabase_uid": str(profile.supabase_uid),
+        "username": profile.username,
+        "bio": profile.bio or "",
+        "profile_picture": profile.profile_picture or "",
+        "created_at": profile.created_at.isoformat(),
+        "updated_at": profile.updated_at.isoformat(),
+        "collection": [perfume_collected.perfume.id for perfume_collected in profile.collection.select_related("perfume").all()],
+
+    }
+
+
+def _get_profile_by_uid(uid):
+    try:
+        return Profile.objects.get(supabase_uid=uid), None
+    except Profile.DoesNotExist:
+        return None, JsonResponse({"error": "User not found."}, status=404)
+
 def _fragrance_to_dict(instance):
-    """
-    Serialize a Perfume instance to a dictionary for JSON response.
-    Uses "fragrance" as the label for the fragrance name.
-
-    Args:
-        instance: A Perfume model instance.
-
-    Returns:
-        dict: A dictionary representation of the fragrance with all relevant fields.
-    """
     return {
         "id": instance.id,
         "url": instance.url,
@@ -74,15 +105,6 @@ def _fragrance_to_dict(instance):
 # -------------------------
 @require_GET
 def fragrance_search(request):
-    """
-    Search fragrances by name or brand with pagination.
-
-    Query params:
-        name (str): Search term to filter by fragrance name or brand (case-insensitive, partial match).
-        page (int): Page number for pagination (default: 1). Each page returns up to 10 results.
-
-    Example: GET /api/fragrances/search/?name=rose&page=1
-    """
     search_term = request.GET.get("name", "").strip()
 
     if search_term:
@@ -137,31 +159,15 @@ def fragrance_search(request):
 @csrf_exempt
 @require_POST
 def fragrance_create(request):
-    """
-    Create a new fragrance (POST).
-
-    Expects JSON body with at least: url, fragrance (name), brand, country, gender.
-    Optional: rating_value, rating_count, year, top_note, middle_note, base_note,
-    perfumer1, perfumer2, mainaccord1–mainaccord5.
-    top_note, middle_note, base_note should be lists of strings.
-
-    Example: POST /api/fragrances/create/
-    """
     try:
         body = json.loads(request.body) if request.body else {}
     except json.JSONDecodeError:
-        return JsonResponse(
-            {"error": "Invalid JSON body"},
-            status=400,
-        )
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
 
     required = ("url", "fragrance", "brand", "country", "gender")
     for key in required:
         if not body.get(key):
-            return JsonResponse(
-                {"error": f"Missing required field: {key}"},
-                status=400,
-            )
+            return JsonResponse({"error": f"Missing required field: {key}"}, status=400)
 
     url = body["url"].strip()
     fragrance_name = body["fragrance"].strip()
@@ -170,10 +176,7 @@ def fragrance_create(request):
     gender = body["gender"].strip()
 
     if not all([url, fragrance_name, brand, country, gender]):
-        return JsonResponse(
-            {"error": "Required fields cannot be empty"},
-            status=400,
-        )
+        return JsonResponse({"error": "Required fields cannot be empty"}, status=400)
 
     def opt_str(key, default=""):
         val = body.get(key)
@@ -229,42 +232,36 @@ def fragrance_create(request):
             mainaccord5=opt_str("mainaccord5"),
         )
     except Exception as e:
-        return JsonResponse(
-            {"error": "Failed to create fragrance", "detail": str(e)},
-            status=400,
-        )
+        return JsonResponse({"error": "Failed to create fragrance", "detail": str(e)}, status=400)
 
     return JsonResponse(_fragrance_to_dict(obj), status=201)
 
+
 # -------------------------
-# Daily scent endpoints (Upstash Redis)
+# Daily scent endpoints using Upstash REST client
 # -------------------------
 @csrf_exempt
 @require_POST
 def create_daily_scent(request):
     """
     Create a daily scent entry for a user.
-
-    Expects JSON body with:
-        user_id (str or int)
-        perfume_id (str or int)
-        timestamp (ISO8601 string or UNIX timestamp)
-
-    Stores the perfume_id keyed by "daily_scent:{user_id}:{YYYY-MM-DD}" with TTL 32 days.
     """
+    user_id, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
     try:
         body = json.loads(request.body)
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON body"}, status=400)
 
-    user_id = body.get("user_id")
+    
     perfume_id = body.get("perfume_id")
     timestamp = body.get("timestamp")
 
-    if not all([user_id, perfume_id, timestamp]):
-        return JsonResponse({"error": "user_id, perfume_id, and timestamp are required"}, status=400)
+    if not all([perfume_id, timestamp]):
+        return JsonResponse({"error": "perfume_id, and timestamp are required"}, status=400)
 
-    # Convert timestamp to date string YYYY-MM-DD
     try:
         if isinstance(timestamp, (int, float)):
             dt = datetime.utcfromtimestamp(timestamp)
@@ -277,39 +274,103 @@ def create_daily_scent(request):
     key = f"daily_scent:{user_id}:{day_str}"
 
     try:
-        redis_client.set(name=key, value=str(perfume_id), ex=TTL_SECONDS)
+        redis.set(key, str(perfume_id), ex=TTL_SECONDS)
     except Exception as e:
         return JsonResponse({"error": "Failed to set value in Redis", "detail": str(e)}, status=500)
 
-    return JsonResponse({"user_id": user_id, "day": day_str, "perfume_id": perfume_id}, status=201)
+    return JsonResponse({"day": day_str, "perfume_id": perfume_id}, status=201)
 
 
 @require_GET
 def get_daily_scents(request):
     """
     Get all daily scents for a user.
-
-    Query param:
-        user_id (required)
-
-    Returns a list of {day: YYYY-MM-DD, perfume_id: str}.
     """
-    user_id = request.GET.get("user_id")
-    if not user_id:
-        return JsonResponse({"error": "user_id is required"}, status=400)
+    user_id, err = _get_uid_from_bearer(request)
+    if err:
+        return err
 
     try:
-        pattern = f"daily_scent:{user_id}:*"
-        keys = redis_client.keys(pattern)
+        # SCAN keys pattern instead of KEYS (recommended in Upstash)
+        cursor = 0
+        keys = []
+        while True:
+            cursor, batch = redis.scan(cursor=cursor, match=f"daily_scent:{user_id}:*")
+            keys.extend(batch)
+            if cursor == 0:
+                break
+
         results = []
         for key in keys:
+            perfume_id = redis.get(key)
             day = key.split(":")[-1]
-            perfume_id = redis_client.get(key)
             if perfume_id:
                 results.append({"day": day, "perfume_id": perfume_id})
+
     except Exception as e:
         return JsonResponse({"error": "Failed to fetch from Redis", "detail": str(e)}, status=500)
 
-    # Sort by day ascending
     results.sort(key=lambda x: x["day"])
-    return JsonResponse({"user_id": user_id, "daily_scents": results}, status=200)
+    return JsonResponse({"daily_scents": results}, status=200)
+from django.views.decorators.http import require_http_methods
+from user.models import Profile
+from .models import PerfumeCollected, Perfume
+
+# -------------------------
+# Perfume collection endpoints
+# -------------------------
+@csrf_exempt
+@require_POST
+def toggle_collection(request):
+    """
+    Add a perfume to user's collection if not already added,
+    or remove it if it exists.
+    Expects JSON: { "perfume_id": <int> }
+    """
+    user_id, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(user_id)
+    if err:
+        return err
+
+    try:
+        body = json.loads(request.body)
+        perfume_id = body.get("perfume_id")
+        if not perfume_id:
+            return JsonResponse({"error": "perfume_id is required"}, status=400)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    try:
+        perfume = Perfume.objects.get(id=perfume_id)
+    except Perfume.DoesNotExist:
+        return JsonResponse({"error": "Perfume not found"}, status=404)
+
+    collected, created = PerfumeCollected.objects.get_or_create(profile=profile, perfume=perfume)
+    
+    if not created:
+        # Already exists → remove it
+        collected.delete()
+        return JsonResponse({"message": "Perfume removed from collection", "perfume_id": perfume_id}, status=200)
+    
+    return JsonResponse({"message": "Perfume added to collection", "perfume_id": perfume_id}, status=201)
+
+
+@require_GET
+def get_collection(request):
+    """
+    Fetch the user's perfume collection.
+    """
+    user_id, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(user_id)
+    if err:
+        return err
+
+    
+    collection = _profile_to_dict(profile).get("collection", [])
+    return JsonResponse({"collection": collection}, status=200)
