@@ -2,7 +2,9 @@
 API views for the perfumes app (fragrance endpoints).
 """
 import json
+import os
 from decimal import Decimal, InvalidOperation
+from datetime import datetime
 
 from django.db.models import Q
 from django.core.paginator import Paginator, EmptyPage
@@ -12,10 +14,28 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .models import Perfume
 
+import redis
+
 # Default and maximum number of results per page for pagination
 RESULTS_PER_PAGE = 10
 
+# -------------------------
+# Upstash Redis configuration
+# -------------------------
+UPSTASH_REDIS_URL = os.environ.get("UPSTASH_REDIS_REST_URL")
+UPSTASH_REDIS_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
 
+redis_client = redis.Redis(
+    host=UPSTASH_REDIS_URL,
+    password=UPSTASH_REDIS_TOKEN,
+    decode_responses=True,
+)
+
+TTL_SECONDS = 32 * 24 * 60 * 60  # 32 days
+
+# -------------------------
+# Perfume serializers
+# -------------------------
 def _fragrance_to_dict(instance):
     """
     Serialize a Perfume instance to a dictionary for JSON response.
@@ -49,7 +69,9 @@ def _fragrance_to_dict(instance):
         "mainaccord5": instance.mainaccord5,
     }
 
-
+# -------------------------
+# Perfume endpoints
+# -------------------------
 @require_GET
 def fragrance_search(request):
     """
@@ -57,8 +79,6 @@ def fragrance_search(request):
 
     Query params:
         name (str): Search term to filter by fragrance name or brand (case-insensitive, partial match).
-                   Matches if the term appears in either the fragrance name or the brand.
-                   If omitted, returns all fragrances (paginated).
         page (int): Page number for pagination (default: 1). Each page returns up to 10 results.
 
     Example: GET /api/fragrances/search/?name=rose&page=1
@@ -215,3 +235,81 @@ def fragrance_create(request):
         )
 
     return JsonResponse(_fragrance_to_dict(obj), status=201)
+
+# -------------------------
+# Daily scent endpoints (Upstash Redis)
+# -------------------------
+@csrf_exempt
+@require_POST
+def create_daily_scent(request):
+    """
+    Create a daily scent entry for a user.
+
+    Expects JSON body with:
+        user_id (str or int)
+        perfume_id (str or int)
+        timestamp (ISO8601 string or UNIX timestamp)
+
+    Stores the perfume_id keyed by "daily_scent:{user_id}:{YYYY-MM-DD}" with TTL 32 days.
+    """
+    try:
+        body = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    user_id = body.get("user_id")
+    perfume_id = body.get("perfume_id")
+    timestamp = body.get("timestamp")
+
+    if not all([user_id, perfume_id, timestamp]):
+        return JsonResponse({"error": "user_id, perfume_id, and timestamp are required"}, status=400)
+
+    # Convert timestamp to date string YYYY-MM-DD
+    try:
+        if isinstance(timestamp, (int, float)):
+            dt = datetime.utcfromtimestamp(timestamp)
+        else:
+            dt = datetime.fromisoformat(timestamp)
+        day_str = dt.strftime("%Y-%m-%d")
+    except Exception as e:
+        return JsonResponse({"error": f"Invalid timestamp: {e}"}, status=400)
+
+    key = f"daily_scent:{user_id}:{day_str}"
+
+    try:
+        redis_client.set(name=key, value=str(perfume_id), ex=TTL_SECONDS)
+    except Exception as e:
+        return JsonResponse({"error": "Failed to set value in Redis", "detail": str(e)}, status=500)
+
+    return JsonResponse({"user_id": user_id, "day": day_str, "perfume_id": perfume_id}, status=201)
+
+
+@require_GET
+def get_daily_scents(request):
+    """
+    Get all daily scents for a user.
+
+    Query param:
+        user_id (required)
+
+    Returns a list of {day: YYYY-MM-DD, perfume_id: str}.
+    """
+    user_id = request.GET.get("user_id")
+    if not user_id:
+        return JsonResponse({"error": "user_id is required"}, status=400)
+
+    try:
+        pattern = f"daily_scent:{user_id}:*"
+        keys = redis_client.keys(pattern)
+        results = []
+        for key in keys:
+            day = key.split(":")[-1]
+            perfume_id = redis_client.get(key)
+            if perfume_id:
+                results.append({"day": day, "perfume_id": perfume_id})
+    except Exception as e:
+        return JsonResponse({"error": "Failed to fetch from Redis", "detail": str(e)}, status=500)
+
+    # Sort by day ascending
+    results.sort(key=lambda x: x["day"])
+    return JsonResponse({"user_id": user_id, "daily_scents": results}, status=200)
