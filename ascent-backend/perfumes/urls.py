@@ -1,11 +1,11 @@
 """
-URL configuration for the perfumes app.
+URL configuration for the perfumes app (fragrance endpoints).
 """
 from django.urls import path
 
 from . import views
 
 urlpatterns = [
-    # Search perfumes by name; supports ?name=... and ?page=... (10 results per page)
-    path("search/", views.perfume_search),
+    path("search/", views.fragrance_search),
+    path("create/", views.fragrance_create),
 ]

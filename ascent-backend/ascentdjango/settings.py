@@ -22,7 +22,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Load environment variables from .env (optional; use for local Supabase connection)
 load_dotenv(BASE_DIR / "ascentdjango" / ".env")
 
-
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
