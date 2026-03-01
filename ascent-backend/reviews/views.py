@@ -12,7 +12,7 @@ from user.models import Profile
 from perfumes.models import Perfume
 
 from .models import Review
-
+from helpers import _parse_json_body, _parse_json_body_optional, _get_profile_by_uid, _get_uid_from_bearer, _profile_to_dict, _fragrance_to_dict
 
 def _review_to_dict(instance):
     """
@@ -81,21 +81,15 @@ def reviews_for_user(request):
     Query params:
       - uid (str, required): Supabase user UUID (Profile.supabase_uid)
     """
-    uid_raw = request.GET.get("uid")
-    if uid_raw in (None, ""):
-        return JsonResponse(
-            {"error": "Missing required query parameter: uid"},
-            status=400,
-        )
+    
+    uid_raw, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+    
 
-    # Optional: validate the user exists (gives cleaner 404 vs empty list)
-    try:
-        profile = Profile.objects.get(supabase_uid=uid_raw)
-    except Profile.DoesNotExist:
-        return JsonResponse(
-            {"error": "Profile not found for given uid"},
-            status=404,
-        )
+    profile, err = _get_profile_by_uid(uid_raw)
+    if err:
+        return err
 
     reviews = (
         Review.objects
@@ -133,7 +127,7 @@ def review_create(request):
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON body"}, status=400)
 
-    required = ("uid", "fid", "description", "rating", "gender", "longevity", "value")
+    required = ("fid", "description", "rating", "gender", "longevity", "value")
     for key in required:
         if body.get(key) in (None, ""):
             return JsonResponse(
@@ -141,16 +135,15 @@ def review_create(request):
                 status=400,
             )
 
-    uid_raw = body.get("uid")
     fid_raw = body.get("fid")
 
-    try:
-        profile = Profile.objects.get(supabase_uid=uid_raw)
-    except Profile.DoesNotExist:
-        return JsonResponse(
-            {"error": "Profile not found for given uid"},
-            status=404,
-        )
+    uid_raw, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(uid_raw)
+    if err:
+        return err
 
     try:
         perfume = Perfume.objects.get(id=fid_raw)

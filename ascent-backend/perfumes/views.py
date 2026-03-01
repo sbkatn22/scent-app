@@ -4,20 +4,21 @@ API views for the perfumes app (fragrance endpoints + daily scent endpoints via 
 import json
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
-
-from django.db.models import Q
+from datetime import timedelta
+from django.db.models import Q, Avg
 from django.core.paginator import Paginator, EmptyPage
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import csrf_exempt
-
+from django.utils import timezone
 from .models import Perfume, PerfumeCollected
-from user.models import Profile
+from reviews.models import Review
 
 from upstash_redis import Redis
 import os
 import uuid
-from user.supabase_client import get_supabase_admin
+
+from helpers import _parse_json_body, _parse_json_body_optional, _get_profile_by_uid, _get_uid_from_bearer, _profile_to_dict, _fragrance_to_dict
 
 
 # -------------------------
@@ -25,7 +26,7 @@ from user.supabase_client import get_supabase_admin
 # -------------------------
 RESULTS_PER_PAGE = 10
 
-# -------------------------
+# ------------------------- 
 # Upstash Redis REST client
 # -------------------------
 redis = Redis(
@@ -34,71 +35,8 @@ redis = Redis(
 )
 TTL_SECONDS = 32 * 24 * 60 * 60  # 32 days
 
-# -------------------------
-# Perfume serializers
-# -------------------------
-
-def _get_uid_from_bearer(request):
-    auth = request.META.get("HTTP_AUTHORIZATION")
-    if not auth or not auth.startswith("Bearer "):
-        return None, JsonResponse({"error": "Authorization header with Bearer token is required."}, status=401)
-    token = auth[7:].strip()
-    if not token:
-        return None, JsonResponse({"error": "Bearer token is required."}, status=401)
-
-    try:
-        admin = get_supabase_admin()
-        user_resp = admin.auth.get_user(token)
-        # user_resp is a UserResponse object; convert to dict safely
-        user_dict = user_resp.user.dict() if hasattr(user_resp.user, "dict") else {}
-        uid_value = user_dict.get("id")
-        uid = uuid.UUID(uid_value)
-        return uid, None
-    except Exception:
-        return None, JsonResponse({"error": "Invalid or expired token."}, status=401)
-
-def _profile_to_dict(profile):
-    return {
-        "id": profile.id,
-        "supabase_uid": str(profile.supabase_uid),
-        "username": profile.username,
-        "bio": profile.bio or "",
-        "profile_picture": profile.profile_picture or "",
-        "created_at": profile.created_at.isoformat(),
-        "updated_at": profile.updated_at.isoformat(),
-        "collection": [perfume_collected.perfume.id for perfume_collected in profile.collection.select_related("perfume").all()],
-
-    }
 
 
-def _get_profile_by_uid(uid):
-    try:
-        return Profile.objects.get(supabase_uid=uid), None
-    except Profile.DoesNotExist:
-        return None, JsonResponse({"error": "User not found."}, status=404)
-
-def _fragrance_to_dict(instance):
-    return {
-        "id": instance.id,
-        "url": instance.url,
-        "fragrance": instance.perfume,
-        "brand": instance.brand,
-        "country": instance.country,
-        "gender": instance.gender,
-        "rating_value": str(instance.rating_value) if instance.rating_value else None,
-        "rating_count": instance.rating_count,
-        "year": instance.year,
-        "top_note": instance.top_note,
-        "middle_note": instance.middle_note,
-        "base_note": instance.base_note,
-        "perfumer1": instance.perfumer1,
-        "perfumer2": instance.perfumer2,
-        "mainaccord1": instance.mainaccord1,
-        "mainaccord2": instance.mainaccord2,
-        "mainaccord3": instance.mainaccord3,
-        "mainaccord4": instance.mainaccord4,
-        "mainaccord5": instance.mainaccord5,
-    }
 
 # -------------------------
 # Perfume endpoints
@@ -236,6 +174,58 @@ def fragrance_create(request):
 
     return JsonResponse(_fragrance_to_dict(obj), status=201)
 
+
+# -------------------------
+# Perfume endpoints
+# -------------------------
+@csrf_exempt
+@require_GET
+def fragrance_get(request):
+    """
+    Get a fragrance by ID.
+    """
+    fragrance_id = request.GET.get("id")
+    if not fragrance_id:
+        return JsonResponse({"error": "id is required"}, status=400)
+
+    try:
+        fragrance = Perfume.objects.get(id=fragrance_id)
+    except Perfume.DoesNotExist:
+        return JsonResponse({"error": "Fragrance not found"}, status=404)
+    
+    if fragrance.updated_at > timezone.now() - timedelta(days=3):
+        reviews = fragrance.reviews.all()
+        fragrance.rating_value = reviews.aggregate(Avg("rating"))["rating__avg"]
+        fragrance.rating_count = len(reviews)
+        fragrance.summer_count = reviews.filter(summer=True).count()
+        fragrance.winter_count = reviews.filter(winter=True).count()
+        fragrance.day_count = reviews.filter(day=True).count()
+        fragrance.night_count = reviews.filter(night=True).count()
+        fragrance.light_sillage_count = reviews.filter(sillage=Review.Sillage.LIGHT_SILLAGE).count()
+        fragrance.moderate_sillage_count = reviews.filter(sillage=Review.Sillage.MODERATE_SILLAGE).count()
+        fragrance.strong_sillage_count = reviews.filter(sillage=Review.Sillage.STRONG_SILLAGE).count()
+        fragrance.no_sillage_count = reviews.filter(sillage=Review.Sillage.NO_SILLAGE).count()
+        fragrance.h0_2_longevity_count = reviews.filter(longevity=Review.Longevity.H0_2).count()
+        fragrance.h2_4_longevity_count = reviews.filter(longevity=Review.Longevity.H2_4).count()
+        fragrance.h4_6_longevity_count = reviews.filter(longevity=Review.Longevity.H4_6).count()
+        fragrance.h6_8_longevity_count = reviews.filter(longevity=Review.Longevity.H6_8).count()
+        fragrance.h8_10_longevity_count = reviews.filter(longevity=Review.Longevity.H8_10).count()
+        fragrance.h10_plus_longevity_count = reviews.filter(longevity=Review.Longevity.H10_PLUS).count()
+        fragrance.super_overpriced_value_count = reviews.filter(value=Review.Value.SUPER_OVERPRICED).count()
+        fragrance.overpriced_value_count = reviews.filter(value=Review.Value.OVERPRICED).count()
+        fragrance.alright_value_count = reviews.filter(value=Review.Value.ALRIGHT).count()
+        fragrance.good_value_count = reviews.filter(value=Review.Value.GOOD_VALUE).count()
+        fragrance.super_value_count = reviews.filter(value=Review.Value.SUPER_VALUE).count()
+        fragrance.gender_female_count = reviews.filter(gender=Review.Gender.FEMALE).count()
+        fragrance.gender_slightly_female_count = reviews.filter(gender=Review.Gender.SLIGHTLY_FEMALE).count()
+        fragrance.gender_unisex_count = reviews.filter(gender=Review.Gender.UNISEX).count()
+        fragrance.gender_slightly_male_count = reviews.filter(gender=Review.Gender.SLIGHTLY_MALE).count()
+        fragrance.gender_male_count = reviews.filter(gender=Review.Gender.MALE).count()
+        fragrance.maceration_average = reviews.filter(maceration__isnull=False).aggregate(Avg("maceration"))["maceration__avg"]
+        fragrance.save()
+
+
+    return JsonResponse(_fragrance_to_dict(fragrance), status=200)
 
 # -------------------------
 # Daily scent endpoints using Upstash REST client

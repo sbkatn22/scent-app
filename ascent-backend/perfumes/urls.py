@@ -9,6 +9,7 @@ urlpatterns = [
     # Perfume endpoints
     path("search/", views.fragrance_search),
     path("create/", views.fragrance_create),
+    path("get/", views.fragrance_get),
 
     # Collection endpoints
     path("collection/toggle/", views.toggle_collection),

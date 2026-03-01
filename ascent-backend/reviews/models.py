@@ -35,6 +35,12 @@ class Review(models.Model):
         GOOD_VALUE = "Good Value", "Good Value"
         SUPER_VALUE = "Super Value", "Super Value"
 
+    class Sillage(models.TextChoices):
+        NO_SILLAGE = "No Sillage", "No Sillage"
+        LIGHT_SILLAGE = "Light Sillage", "Light Sillage"
+        MODERATE_SILLAGE = "Moderate Sillage", "Moderate Sillage"
+        STRONG_SILLAGE = "Strong Sillage", "Strong Sillage"
+
     profile = models.ForeignKey(
         Profile,
         on_delete=models.CASCADE,
@@ -57,6 +63,11 @@ class Review(models.Model):
     autumn = models.BooleanField(default=False)
     day = models.BooleanField(default=False)
     night = models.BooleanField(default=False)
+    sillage = models.CharField(
+        max_length=20,
+        choices=Sillage.choices,
+        null=True, blank=True
+    )
     longevity = models.CharField(
         max_length=20,
         choices=Longevity.choices,
