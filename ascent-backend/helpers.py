@@ -111,3 +111,8 @@ def _get_uid_from_bearer(request):
         return uid, None
     except Exception:
         return None, JsonResponse({"error": "Invalid or expired token."}, status=401)
+
+
+def _summarized_profiles_from_queryset(qs):
+    profiles = [{"uid": f_profile.supabase_uid, "profile_picture": f_profile.profile_picture, "username": f_profile.username} for f_profile in qs]
+    return profiles
