@@ -12,6 +12,8 @@ import {
   View,
 } from "react-native";
 
+
+
 type Fragrance = {
   id: string;
   name: string;
@@ -27,6 +29,7 @@ type FriendWear = {
     brand: string;
   } | null; // null = not set today
 };
+
 
 const MOCK_ALL_FRAGRANCES: Fragrance[] = [
   {

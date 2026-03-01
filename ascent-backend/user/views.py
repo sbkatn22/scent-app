@@ -11,9 +11,64 @@ from django.views.decorators.http import require_http_methods
 
 from .models import Profile
 from .supabase_client import get_supabase_admin
-from helpers import _parse_json_body, _parse_json_body_optional, _get_profile_by_uid, _get_uid_from_bearer, _profile_to_dict, _fragrance_to_dict
 
 
+def _parse_json_body(request):
+    if not request.body:
+        return None, JsonResponse({"error": "Request body is required"}, status=400)
+    try:
+        return json.loads(request.body), None
+    except json.JSONDecodeError:
+        return None, JsonResponse({"error": "Invalid JSON"}, status=400)
+
+
+def _parse_json_body_optional(request):
+    if not request.body:
+        return {}, None
+    try:
+        return json.loads(request.body), None
+    except json.JSONDecodeError:
+        return None, JsonResponse({"error": "Invalid JSON"}, status=400)
+
+
+def _profile_to_dict(profile):
+    return {
+        "id": profile.id,
+        "supabase_uid": str(profile.supabase_uid),
+        "username": profile.username,
+        "bio": profile.bio or "",
+        "profile_picture": profile.profile_picture or "",
+        "created_at": profile.created_at.isoformat(),
+        "updated_at": profile.updated_at.isoformat(),
+        
+    }
+
+
+def _get_profile_by_uid(uid):
+    try:
+        return Profile.objects.get(supabase_uid=uid), None
+    except Profile.DoesNotExist:
+        return None, JsonResponse({"error": "User not found."}, status=404)
+
+
+def _get_uid_from_bearer(request):
+    auth = request.META.get("HTTP_AUTHORIZATION")
+    if not auth or not auth.startswith("Bearer "):
+        return None, JsonResponse({"error": "Authorization header with Bearer token is required."}, status=401)
+    token = auth[7:].strip()
+    if not token:
+        return None, JsonResponse({"error": "Bearer token is required."}, status=401)
+
+    try:
+        admin = get_supabase_admin()
+        user_resp = admin.auth.get_user(token)
+        # user_resp is a UserResponse object; convert to dict safely
+        user_dict = user_resp.user.dict() if hasattr(user_resp.user, "dict") else {}
+        uid_value = user_dict.get("id")
+        uid = uuid.UUID(uid_value)
+        return uid, None
+    except Exception:
+        return None, JsonResponse({"error": "Invalid or expired token."}, status=401)
 
 
 # ----- Login -----
@@ -90,12 +145,16 @@ def create(request):
         if Profile.objects.filter(username=username).exists():
             return JsonResponse({"error": "Username already exists."}, status=400)
         admin = get_supabase_admin()
+        print(email)
+        print(password)
+        print(username)
         resp = admin.auth.admin.create_user({
             "email": email,
             "password": password,
             "email_confirm": True,
             "user_metadata": {"username": username},
         })
+        
     except Exception as e:
         msg = str(e).lower()
         if any(x in msg for x in ["already", "exists", "registered"]):

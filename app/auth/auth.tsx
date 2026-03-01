@@ -1,18 +1,22 @@
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import React, { useMemo, useState } from "react";
 import {
-    Keyboard,
-    KeyboardAvoidingView,
-    Platform,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    TouchableWithoutFeedback,
-    View,
+  ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View,
 } from "react-native";
+
+import { login, register } from "@/lib/api"; // ✅ you created lib/api.ts in Step B
 
 type Mode = "signin" | "signup";
 
@@ -27,17 +31,91 @@ export default function AuthScreen() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
-  const title = useMemo(() => (isSignUp ? "Create account" : "Welcome back"), [isSignUp]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const title = useMemo(
+    () => (isSignUp ? "Create account" : "Welcome back"),
+    [isSignUp]
+  );
   const subtitle = useMemo(
     () => (isSignUp ? "Start rating your scents." : "Sign in to continue."),
     [isSignUp]
   );
 
-  const onSubmit = () => {
-    // ✅ UI-only for now. Later you’ll call backend auth here.
-    // For now: go straight to the main tabs.
-    router.replace("/(tabs)");
+  const validate = () => {
+    if (!email.trim()) return "Email is required.";
+    if (!password.trim()) return "Password is required.";
+    if (isSignUp && !username.trim()) return "Username is required.";
+    return null;
   };
+
+  const onSubmit = async () => {
+  const v = validate();
+  if (v) {
+    setError(v);
+    return;
+  }
+
+  setLoading(true);
+  setError(null);
+
+  try {
+    if (isSignUp) {
+      console.log("🔵 REGISTER START");
+      console.log("Sending to backend:", {
+        email: email.trim(),
+        username: username.trim(),
+        passwordLength: password.trim().length,
+      });
+
+      // 1) Register
+      const registerResponse = await register(
+        email.trim(),
+        password.trim(),
+        username.trim()
+      );
+
+      console.log("🟢 REGISTER SUCCESS:", registerResponse);
+
+      // 2) Login after register
+      const session = await login(email.trim(), password.trim());
+
+      console.log("🟢 LOGIN AFTER REGISTER SUCCESS:", session);
+
+      await AsyncStorage.multiSet([
+        ["access_token", session.access_token],
+        ["refresh_token", session.refresh_token],
+        ["profile", JSON.stringify(session.profile)],
+      ]);
+
+      router.replace("/(tabs)");
+    } else {
+      console.log("🔵 LOGIN START");
+      console.log("Sending to backend:", {
+        email: email.trim(),
+        passwordLength: password.trim().length,
+      });
+
+      const session = await login(email.trim(), password.trim());
+
+      console.log("🟢 LOGIN SUCCESS:", session);
+
+      await AsyncStorage.multiSet([
+        ["access_token", session.access_token],
+        ["refresh_token", session.refresh_token],
+        ["profile", JSON.stringify(session.profile)],
+      ]);
+
+      router.replace("/(tabs)");
+    }
+  } catch (e: any) {
+    console.log("🔴 AUTH ERROR:", e);
+    setError(e?.message ?? "Something went wrong.");
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -55,6 +133,9 @@ export default function AuthScreen() {
 
           {/* Form */}
           <View style={styles.form}>
+            {/* Error */}
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
             {/* Email */}
             <View style={styles.inputWrap}>
               <Text style={styles.label}>Email</Text>
@@ -67,7 +148,8 @@ export default function AuthScreen() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 style={styles.input}
-                returnKeyType={isSignUp ? "next" : "next"}
+                returnKeyType="next"
+                editable={!loading}
               />
             </View>
 
@@ -84,6 +166,7 @@ export default function AuthScreen() {
                   autoCorrect={false}
                   style={styles.input}
                   returnKeyType="next"
+                  editable={!loading}
                 />
               </View>
             )}
@@ -103,11 +186,13 @@ export default function AuthScreen() {
                   style={[styles.input, { flex: 1, marginBottom: 0 }]}
                   returnKeyType="done"
                   onSubmitEditing={onSubmit}
+                  editable={!loading}
                 />
                 <TouchableOpacity
                   onPress={() => setShowPassword((s) => !s)}
                   style={styles.eyeBtn}
                   hitSlop={10}
+                  disabled={loading}
                 >
                   <Ionicons
                     name={showPassword ? "eye-off-outline" : "eye-outline"}
@@ -119,15 +204,23 @@ export default function AuthScreen() {
             </View>
 
             {/* Primary Button */}
-            <TouchableOpacity style={styles.primaryBtn} onPress={onSubmit}>
-              <Text style={styles.primaryBtnText}>
-                {isSignUp ? "Create account" : "Sign in"}
-              </Text>
+            <TouchableOpacity
+              style={[styles.primaryBtn, loading && { opacity: 0.7 }]}
+              onPress={onSubmit}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.primaryBtnText}>
+                  {isSignUp ? "Create account" : "Sign in"}
+                </Text>
+              )}
             </TouchableOpacity>
 
             {/* Secondary actions */}
             {!isSignUp && (
-              <TouchableOpacity onPress={() => {}} style={styles.forgotBtn}>
+              <TouchableOpacity onPress={() => {}} style={styles.forgotBtn} disabled={loading}>
                 <Text style={styles.forgotText}>Forgot password?</Text>
               </TouchableOpacity>
             )}
@@ -138,7 +231,11 @@ export default function AuthScreen() {
                 {isSignUp ? "Already have an account?" : "New here?"}
               </Text>
               <TouchableOpacity
-                onPress={() => setMode(isSignUp ? "signin" : "signup")}
+                onPress={() => {
+                  setMode(isSignUp ? "signin" : "signup");
+                  setError(null);
+                }}
+                disabled={loading}
               >
                 <Text style={styles.toggleLink}>
                   {isSignUp ? "Sign in" : "Create one"}
@@ -172,6 +269,15 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 14.5, color: "#777", marginTop: 8, lineHeight: 20 },
 
   form: { gap: 14 },
+
+  errorText: {
+    color: "#b00020",
+    fontWeight: "800",
+    fontSize: 13,
+    backgroundColor: "#fde7ea",
+    padding: 10,
+    borderRadius: 12,
+  },
 
   inputWrap: { gap: 8 },
   label: { fontSize: 12.5, fontWeight: "800", color: "#111" },
