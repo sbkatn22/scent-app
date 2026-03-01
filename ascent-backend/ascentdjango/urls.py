@@ -23,5 +23,6 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/ping", views.ping),
     path("api/fragrances/", include("perfumes.urls")),
+    path("api/reviews/", include("reviews.urls")),
     path("api/user/", include("user.urls")),
 ]

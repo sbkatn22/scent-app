@@ -37,6 +37,7 @@ class Perfume(models.Model):
     def __str__(self):
         return f"{self.brand} - {self.perfume}"
 
+
 class PerfumeCollected(models.Model):
 
     class FragranceType(models.TextChoices):
@@ -51,10 +52,20 @@ class PerfumeCollected(models.Model):
         MINI = "MINI", "Mini"
         BOTTLE = "BOTTLE", "Bottle"
 
-    profile = models.ForeignKey(Profile, on_delete=models.CASCADE, related_name="collection")
+    profile = models.ForeignKey(
+        Profile, on_delete=models.CASCADE, related_name="collection"
+    )
     perfume = models.ForeignKey(Perfume, on_delete=models.CASCADE)
-    perfume_type = models.CharField(max_length=100, choices=FragranceType.choices, default=FragranceType.EDT)
-    perfume_size = models.CharField(max_length=100, choices=PerfumeSize.choices, default=PerfumeSize.SAMPLE)
+    perfume_type = models.CharField(
+        max_length=100,
+        choices=FragranceType.choices,
+        default=FragranceType.EDT,
+    )
+    perfume_size = models.CharField(
+        max_length=100,
+        choices=PerfumeSize.choices,
+        default=PerfumeSize.SAMPLE,
+    )
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
