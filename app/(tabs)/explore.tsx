@@ -1,6 +1,11 @@
+// app/(tabs)/explore.tsx
+
 import { Ionicons } from "@expo/vector-icons";
-import React, { useMemo, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useRouter } from "expo-router";
+import React, { useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   Modal,
   Pressable,
@@ -12,7 +17,7 @@ import {
   View,
 } from "react-native";
 
-
+import { getMe, Profile } from "@/lib/user"; // ✅ Step 1: getMe() calls /api/user/me via axios http instance
 
 type Fragrance = {
   id: string;
@@ -29,7 +34,6 @@ type FriendWear = {
     brand: string;
   } | null; // null = not set today
 };
-
 
 const MOCK_ALL_FRAGRANCES: Fragrance[] = [
   {
@@ -102,8 +106,11 @@ function initials(name: string) {
 }
 
 export default function ExploreScreen() {
-  // mock user (replace later with auth user)
-  const userName = "Dickshit";
+  const router = useRouter();
+
+  // ✅ REAL USER FROM /me (Option B)
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
 
   // mock: user’s collection (store IDs)
   const [collectionIds, setCollectionIds] = useState<string[]>(["1", "2", "5"]);
@@ -112,6 +119,41 @@ export default function ExploreScreen() {
   // modals
   const [manageModalOpen, setManageModalOpen] = useState(false);
   const [cotdModalOpen, setCotdModalOpen] = useState(false);
+
+  // ✅ Load profile on mount
+  useEffect(() => {
+    let alive = true;
+
+    const loadProfile = async () => {
+      try {
+        setProfileLoading(true);
+
+        const me = await getMe(); // uses axios http instance -> auto refresh on 401
+
+        if (!alive) return;
+        setProfile(me);
+
+        // optional cache
+        await AsyncStorage.setItem("profile", JSON.stringify(me));
+      } catch (e) {
+        // refresh failed or token invalid -> logout behavior
+        await AsyncStorage.multiRemove(["access_token", "refresh_token", "profile"]);
+
+        // NOTE: adjust if your auth route differs
+        router.replace("/auth/auth");
+      } finally {
+        if (alive) setProfileLoading(false);
+      }
+    };
+
+    loadProfile();
+
+    return () => {
+      alive = false;
+    };
+  }, [router]);
+
+  const userName = profile?.username ?? "—";
 
   const collection = useMemo(
     () => MOCK_ALL_FRAGRANCES.filter((f) => collectionIds.includes(f.id)),
@@ -126,12 +168,15 @@ export default function ExploreScreen() {
   const toggleInCollection = (id: string) => {
     setCollectionIds((prev) => {
       const exists = prev.includes(id);
-      const next = exists ? prev.filter((x) => x !== id) : [...prev, id];
+      const next = exists ? prev.filter((x) => x !== id) : [...prev];
+
+      // if adding, append
+      const finalNext = exists ? next : [...prev, id];
 
       // if user removed the selected COTD, clear it
       if (exists && cologneOfDayId === id) setCologneOfDayId(null);
 
-      return next;
+      return finalNext;
     });
   };
 
@@ -143,11 +188,29 @@ export default function ExploreScreen() {
       >
         {/* Header */}
         <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.greeting}>Hi {userName} 👋</Text>
-            <Text style={styles.subGreeting}>
-              Here’s your collection and today’s pick.
-            </Text>
+          <View style={{ flex: 1, paddingRight: 10 }}>
+            {profileLoading ? (
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <ActivityIndicator />
+                <Text style={{ color: "#777", fontWeight: "700" }}>Loading profile…</Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.greeting}>Hi {userName} 👋</Text>
+                <Text style={styles.subGreeting}>
+                  Here’s your collection and today’s pick.
+                </Text>
+
+                {!!profile?.supabase_uid && (
+                  <Text
+                    style={{ marginTop: 6, fontSize: 12, color: "#999" }}
+                    numberOfLines={1}
+                  >
+                    UID: {profile.supabase_uid}
+                  </Text>
+                )}
+              </>
+            )}
           </View>
 
           <View style={styles.avatar}>
@@ -268,7 +331,7 @@ export default function ExploreScreen() {
           />
         )}
 
-        {/* ✅ Friends Section */}
+        {/* Friends Section */}
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>Your Friends</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -543,7 +606,12 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: "#fff", fontWeight: "800" },
 
   emptyTitle: { fontSize: 16, fontWeight: "800", color: "#111" },
-  emptySubtitle: { fontSize: 13.5, color: "#666", marginTop: 6, lineHeight: 18 },
+  emptySubtitle: {
+    fontSize: 13.5,
+    color: "#666",
+    marginTop: 6,
+    lineHeight: 18,
+  },
 
   emptyCollection: {
     backgroundColor: "#fafafa",

@@ -1,3 +1,4 @@
+import { http } from "@/lib/http";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
@@ -83,13 +84,14 @@ export default function AuthScreen() {
 
       console.log("🟢 LOGIN AFTER REGISTER SUCCESS:", session);
 
-      await AsyncStorage.multiSet([
-        ["access_token", session.access_token],
-        ["refresh_token", session.refresh_token],
-        ["profile", JSON.stringify(session.profile)],
-      ]);
+      console.log("🟢 LOGIN SUCCESS:", session);
 
-      router.replace("/(tabs)");
+      // 🔥 Print raw tokens (shortened for readability)
+      console.log("Access Token (first 30):", session.access_token.slice(0, 30));
+      console.log("Refresh Token (first 30):", session.refresh_token.slice(0, 30));
+
+      // Save to storage
+      
     } else {
       console.log("🔵 LOGIN START");
       console.log("Sending to backend:", {
@@ -102,10 +104,27 @@ export default function AuthScreen() {
       console.log("🟢 LOGIN SUCCESS:", session);
 
       await AsyncStorage.multiSet([
-        ["access_token", session.access_token],
-        ["refresh_token", session.refresh_token],
-        ["profile", JSON.stringify(session.profile)],
-      ]);
+      ["access_token", "fake_invalid_token"],              // ✅ force 401
+      ["refresh_token", session.refresh_token],            // ✅ real refresh token
+      ["profile", JSON.stringify(session.profile)],
+      ["expires_at", String(session.expires_at ?? "")],
+    ]);
+      console.log("✅ SAVED TOKENS:");
+      console.log("access_token:", "fake_invalid_token");
+      console.log("refresh_token:", session.refresh_token?.slice(0, 12) + "…");
+      console.log("expires_at:", session.expires_at);
+
+      console.log("🧪 Now calling /api/user/me to force 401 -> refresh -> retry...");
+
+      try {
+        const me = await http.get("/api/user/me");
+        console.log("✅ /me SUCCESS AFTER REFRESH:", me.data);
+      } catch (err: any) {
+        console.log("❌ /me FAILED:", err?.message ?? err);
+        // If refresh failed, http.ts clears storage and throws "Session expired..."
+        // So you can route back to auth if you want:
+        // router.replace("/auth/auth");
+      }
 
       router.replace("/(tabs)");
     }
