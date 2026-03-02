@@ -18,4 +18,6 @@ urlpatterns = [
     # Daily scent endpoints
     path("daily_scent/create/", views.create_daily_scent),
     path("daily_scent/get/", views.get_daily_scents),
+
+    path("reccomendations", views.get_reccommendations)
 ]

@@ -5,7 +5,7 @@ import json
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from datetime import timedelta
-from django.db.models import Q, Avg, Value
+from django.db.models import Q, Avg, Value, F
 from django.contrib.postgres.search import TrigramSimilarity
 from django.core.paginator import Paginator, EmptyPage
 from django.db.models.functions import Concat
@@ -15,19 +15,24 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from .models import Perfume, PerfumeCollected
 from reviews.models import Review
-
+import requests_cache
+from retry_requests import retry
 from upstash_redis import Redis
 import os
 import uuid
 
 from helpers import _parse_json_body, _parse_json_body_optional, _get_profile_by_uid, _get_uid_from_bearer, _profile_to_dict, _fragrance_to_dict
-
+import openmeteo_requests
 
 # -------------------------
 # Pagination
 # -------------------------
 RESULTS_PER_PAGE = 10
 
+open_meteo_url = "https://api.open-meteo.com/v1/forecast"
+cache_session = requests_cache.CachedSession('.cache', expire_after = 3600)
+retry_session = retry(cache_session, retries = 5, backoff_factor = 0.2)
+openmeteo = openmeteo_requests.Client(session = retry_session)
 # ------------------------- 
 # Upstash Redis REST client
 # -------------------------
@@ -337,7 +342,7 @@ def toggle_collection(request):
     
     return JsonResponse({"message": "Perfume added to collection", "perfume_id": perfume_id}, status=201)
 
-
+@csrf_exempt
 @require_GET
 def get_collection(request):
     """
@@ -354,3 +359,352 @@ def get_collection(request):
     
     collection = _profile_to_dict(profile).get("collection", [])
     return JsonResponse({"collection": collection}, status=200)
+
+def get_weather(coordinates):
+    params = {
+        "latitude": coordinates["latitude"],
+        "longitude": coordinates["longitude"],
+        "current": ["temperature_2m", "is_day", "rain", "snowfall", "apparent_temperature", "relative_humidity_2m"],
+    }
+    response = openmeteo.weather_api(open_meteo_url, params=params)[0]
+    current_data = response.Current()
+    formatted_data = {
+        "current_temperature_2m": current_data.Variables(0).Value(),
+        "current_is_day": current_data.Variables(1).Value(),
+        "current_rain": current_data.Variables(2).Value(),
+        "current_snowfall": current_data.Variables(3).Value(),
+        "current_apparent_temperature": current_data.Variables(4).Value(),
+        "current_relative_humidity_2m": current_data.Variables(5).Value(),
+    }
+    return formatted_data
+
+
+def _score_perfume(perfume, profile, weather, collection_ids):
+    """
+    Compute a recommendation score for a perfume given the user's profile
+    and current weather conditions.
+    """
+    # Weather basics
+    temp = weather.get("current_apparent_temperature") or weather.get(
+        "current_temperature_2m"
+    )
+    is_day = bool(weather.get("current_is_day", 1))
+    humidity = weather.get("current_relative_humidity_2m")
+
+    # Main accords – used for weather pairing logic
+    accords = [
+        (perfume.mainaccord1 or "").lower(),
+        (perfume.mainaccord2 or "").lower(),
+        (perfume.mainaccord3 or "").lower(),
+        (perfume.mainaccord4 or "").lower(),
+        (perfume.mainaccord5 or "").lower(),
+    ]
+    accords = [a for a in accords if a]
+
+    is_gourmand = any("gourmand" in a or "sweet" in a  for a in accords)
+    is_oudy = any("oud" in a or "agarwood" in a for a in accords)
+    is_warm_amber_spicy = any(
+        "amber" in a or "spicy" in a or "oriental" in a for a in accords
+    )
+    is_fresh = any(
+        any(
+            kw in a
+            for kw in (
+                "fresh",
+                "citrus",
+                "green",
+                "aquatic",
+                "marine",
+                "ozonic",
+                "aldehydic",
+                "fruity",
+                "green"
+            )
+        )
+        for a in accords
+    )
+
+    # Base rating score (normalize ~3–5 to 0–1)
+    rating_score = 0.5
+    if perfume.rating_value is not None:
+        try:
+            rating = float(perfume.rating_value)
+            rating_score = max(0.0, min(1.0, (rating - 3.0) / 2.0))
+        except (TypeError, ValueError):
+            rating_score = 0.5
+
+    # Season preference inferred from temperature
+    season = None
+    if temp is not None:
+        if temp <= 10:
+            season = "winter"
+        elif temp >= 23:
+            season = "summer"
+        else:
+            season = "mild"
+
+    summer_count = perfume.summer_count or 0
+    winter_count = perfume.winter_count or 0
+    season_total = summer_count + winter_count
+    if season_total > 0:
+        summer_frac = summer_count / season_total
+        winter_frac = winter_count / season_total
+    else:
+        summer_frac = winter_frac = 0.5
+
+    if season == "summer":
+        season_score = summer_frac
+    elif season == "winter":
+        season_score = winter_frac
+    else:
+        season_score = 0.5 * (summer_frac + winter_frac)
+
+    # Time of day (day/night)
+    day_count = perfume.day_count or 0
+    night_count = perfume.night_count or 0
+    dn_total = day_count + night_count
+    if dn_total > 0:
+        day_frac = day_count / dn_total
+        night_frac = night_count / dn_total
+    else:
+        day_frac = night_frac = 0.5
+    time_of_day_score = day_frac if is_day else night_frac
+
+    # Longevity: match average community vote to weather-driven target
+    lon_counts = {
+        1: perfume.h0_2_longevity_count or 0,
+        2: perfume.h2_4_longevity_count or 0,
+        3: perfume.h4_6_longevity_count or 0,
+        4: perfume.h6_8_longevity_count or 0,
+        5: perfume.h8_10_longevity_count or 0,
+        6: perfume.h10_plus_longevity_count or 0,
+    }
+    lon_total = sum(lon_counts.values())
+    if lon_total > 0:
+        avg_idx = sum(level * count for level, count in lon_counts.items()) / lon_total
+    else:
+        avg_idx = 3.5
+
+    if temp is None:
+        target_idx = 4.0
+    else:
+        if temp <= 5:
+            target_idx = 5.5  # prefer very long in cold
+        elif temp >= 27:
+            target_idx = 3.0  # prefer moderate in heat
+        else:
+            # linear interpolation between 5 °C and 27 °C
+            t = (temp - 5) / (27 - 5)
+            target_idx = 5.5 + (3.0 - 5.5) * t
+    longevity_score = max(0.0, 1.0 - abs(avg_idx - target_idx) / 5.0)
+
+    # Gender alignment: use detailed review counts if present
+    total_gender_votes = (
+        (perfume.gender_female_count or 0)
+        + (perfume.gender_slightly_female_count or 0)
+        + (perfume.gender_unisex_count or 0)
+        + (perfume.gender_slightly_male_count or 0)
+        + (perfume.gender_male_count or 0)
+    )
+
+    if total_gender_votes > 0:
+        gf = perfume.gender_female_count or 0
+        gsf = perfume.gender_slightly_female_count or 0
+        gu = perfume.gender_unisex_count or 0
+        gsm = perfume.gender_slightly_male_count or 0
+        gm = perfume.gender_male_count or 0
+
+        if profile.cologne_gender == Profile.Gender.FEMALE:
+            aligned = gf + 0.7 * gsf + 0.4 * gu
+        elif profile.cologne_gender == Profile.Gender.SLIGHTLY_FEMALE:
+            aligned = 0.7 * gf + gsf + 0.5 * gu
+        elif profile.cologne_gender == Profile.Gender.UNISEX:
+            aligned = (
+                0.5 * gf + 0.5 * gm + gu + 0.7 * gsf + 0.7 * gsm
+            )
+        elif profile.cologne_gender == Profile.Gender.SLIGHTLY_MALE:
+            aligned = 0.3 * gsf + gsm + 0.7 * gm + 0.5 * gu
+        else:  # Profile.Gender.MALE
+            aligned = gm + 0.7 * gsm + 0.4 * gu
+
+        gender_score = max(0.0, min(1.0, aligned / total_gender_votes))
+    else:
+        # Fallback to basic perfume.gender label
+        g = (perfume.gender or "").lower()
+        if g == "unisex":
+            gender_score = 0.9
+        elif profile.cologne_gender in (
+            Profile.Gender.MALE,
+            Profile.Gender.SLIGHTLY_MALE,
+        ) and g == "men":
+            gender_score = 1.0
+        elif profile.cologne_gender in (
+            Profile.Gender.FEMALE,
+            Profile.Gender.SLIGHTLY_FEMALE,
+        ) and g == "women":
+            gender_score = 1.0
+        else:
+            gender_score = 0.6
+
+    # Humidity adjustment – very humid days penalize heavy gourmand/oud/amber scents,
+    # and slightly reward fresher styles.
+    if humidity is not None:
+        humidity_factor = 1.0 - max(0.0, (humidity - 60.0) / 60.0) * 0.2
+        if humidity >= 70:
+            if is_gourmand or is_oudy or is_warm_amber_spicy:
+                humidity_factor *= 0.6
+            if is_fresh:
+                humidity_factor *= 1.1
+        humidity_factor = max(0.5, min(1.3, humidity_factor))
+    else:
+        humidity_factor = 1.0
+
+    # Accord–temperature pairing: warm heavy scents for cold, fresher for heat.
+    accord_temp_score = 0.5
+    if temp is not None and accords:
+        if temp <= 10:
+            if is_gourmand or is_oudy or is_warm_amber_spicy:
+                accord_temp_score = 1.0
+            elif is_fresh:
+                accord_temp_score = 0.4
+        elif temp >= 27:
+            if is_fresh:
+                accord_temp_score = 1.0
+            elif is_gourmand or is_oudy or is_warm_amber_spicy:
+                accord_temp_score = 0.2
+        else:
+            if is_fresh or is_warm_amber_spicy:
+                accord_temp_score = 0.7
+            else:
+                accord_temp_score = 0.5
+
+    # Small bonus if the user already owns the fragrance
+    in_collection_bonus = 0.2 if perfume.id in collection_ids else 0.0
+
+    score = (
+        2.5 * rating_score
+        + 1.5 * season_score
+        + 1.2 * longevity_score
+        + 1.0 * gender_score
+        + 0.8 * time_of_day_score
+        + 0.8 * accord_temp_score
+        + in_collection_bonus
+    )
+
+    score *= humidity_factor
+    return float(score)
+
+@csrf_exempt
+@require_POST
+def get_reccommendations(request):
+    user_id, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(user_id)
+    if err:
+        return err
+    try:
+        body = json.loads(request.body)
+        coordinates = body.get("coordinates")
+        if not coordinates:
+            return JsonResponse({"error": "coordinates is required"}, status=400)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    try:
+        weather = get_weather(coordinates=coordinates)
+    except Exception as e:
+        print(e)
+        return JsonResponse({"error": "Something is wrong"}, status=500)
+
+    collected_qs = profile.collection.select_related("perfume").all()
+    collection_perfumes = [pc.perfume for pc in collected_qs]
+    collection_ids = {p.id for p in collection_perfumes}
+    formatted_collection = [_fragrance_to_dict(perf) for perf in collection_perfumes]
+
+    # Derive simple season and time-of-day flags from weather
+    temp = weather.get("current_apparent_temperature") or weather.get(
+        "current_temperature_2m"
+    )
+    is_day = bool(weather.get("current_is_day", 1))
+
+    season = None
+    if temp is not None:
+        if temp <= 10:
+            season = "winter"
+        elif temp >= 23:
+            season = "summer"
+        else:
+            season = "mild"
+
+    # Start from all perfumes and filter by season / time of day using vote counts,
+    # then take the top 500 by rating_count before scoring.
+    qs = Perfume.objects.all()
+
+    if season == "summer":
+        # Exclude scents that are clearly winter-leaning when it's summer
+        qs = qs.exclude(
+            winter_count__gt=0,
+            winter_count__gte=F("summer_count"),
+        )
+    elif season == "winter":
+        # Exclude scents that are clearly summer-leaning when it's winter
+        qs = qs.exclude(
+            summer_count__gt=0,
+            summer_count__gte=F("winter_count"),
+        )
+
+    if is_day:
+        qs = qs.exclude(
+            Q(night_count__gt=0) & Q(night_count__gt=F("day_count"))
+        )
+    else:
+        qs = qs.exclude(
+            Q(day_count__gt=0) & Q(day_count__gt=F("night_count"))
+        )
+
+    candidates_qs = qs.order_by("-rating_count")[:500]
+    candidates = list(candidates_qs)
+
+    scored = []
+    for perfume in candidates:
+        score = _score_perfume(perfume, profile, weather, collection_ids)
+        scored.append((perfume, score))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    # Build a final set of 3 recommendations, ensuring at least one
+    # comes from the user's collection if possible.
+    top_pool = scored[:50]
+    collection_pool = [item for item in top_pool if item[0].id in collection_ids]
+
+    selected = []
+    used_ids = set()
+
+    if collection_pool:
+        selected.append(collection_pool[0])
+        used_ids.add(collection_pool[0][0].id)
+
+    for perfume, score in top_pool:
+        if len(selected) >= 3:
+            break
+        if perfume.id in used_ids:
+            continue
+        selected.append((perfume, score))
+        used_ids.add(perfume.id)
+
+    recommendations = []
+    for perfume, score in selected[:3]:
+        data = _fragrance_to_dict(perfume)
+        data["score"] = round(score, 3)
+        data["in_collection"] = perfume.id in collection_ids
+        recommendations.append(data)
+
+    return JsonResponse(
+        {
+            "weather": weather,
+            "collection": formatted_collection,
+            "recommendations": recommendations,
+        },
+        status=200,
+    )
