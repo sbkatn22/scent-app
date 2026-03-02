@@ -51,3 +51,47 @@ export async function register(email: string, password: string, username: string
     body: JSON.stringify({ email, password, username }),
   });
 }
+
+// ===== Fragrance Search (GET) =====
+
+export type FragranceApiItem = {
+  id: number;
+  url: string;
+  fragrance: string;
+  brand: string;
+  country?: string;
+  gender?: string;
+  rating_value?: string; // API returns string like "4.25"
+  rating_count?: number;
+  year?: number;
+
+  top_note?: string[];
+  middle_note?: string[];
+  base_note?: string[];
+
+  perfumer1?: string;
+  perfumer2?: string;
+
+  mainaccord1?: string;
+  mainaccord2?: string;
+  mainaccord3?: string;
+  mainaccord4?: string;
+  mainaccord5?: string;
+};
+
+export type FragranceSearchResponse = {
+  count: number;
+  results: FragranceApiItem[];
+};
+
+export async function searchFragrances(name?: string, page: number = 1) {
+  const params = new URLSearchParams();
+  if (name && name.trim()) params.set("name", name.trim());
+  if (page) params.set("page", String(page));
+
+  const qs = params.toString();
+  const path = `/api/fragrances/search/${qs ? `?${qs}` : ""}`;
+
+  // Your existing request() works fine for GET too
+  return request<FragranceSearchResponse>(path, { method: "GET" });
+}
