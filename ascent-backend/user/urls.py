@@ -9,6 +9,7 @@ urlpatterns = [
     path("me", views.me),
     path("follow", views.toggle_follow),
     path("following", views.get_following),
-    path("followers", views.get_followers)
+    path("followers", views.get_followers),
+    path("following/daily-scents", views.get_followers_scents),
 
 ]

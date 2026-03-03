@@ -16,7 +16,9 @@ Django backend for the scent app. Uses Supabase for auth. Login returns Supabase
   - [Toggle collection (POST)](#toggle-collection-post)
   - [Get collection (GET)](#get-collection-get)
   - [Create daily scent (POST)](#create-daily-scent-post)
-  - [Get daily scents (GET)](#get-daily-scents-get)
+  - [Get daily scents (GET — all)](#get-daily-scents-get--all)
+  - [Get daily scent for a day (GET)](#get-daily-scent-for-a-day-get)
+  - [Get recommendations (POST)](#get-recommendations-post)
 - [Reviews API](#reviews-api-apireviews)
   - [Review model](#review-model)
   - [Create review (POST)](#create-review-post)
@@ -67,6 +69,8 @@ Search fragrances by name or brand with pagination. If no search term is provide
 | Method | Path | Query params | Success | Error |
 |--------|------|--------------|---------|-------|
 | GET | `/api/fragrances/search/` | `name` (optional), `page` (optional) | `200` — `{ "count", "results" }` | — |
+
+> Note: `count` is currently the number of items returned in `results` for that page (not the total number of matches).
 
 #### Query parameters
 
@@ -358,15 +362,15 @@ Returns all daily scent entries for the authenticated user. Requires `Authorizat
 
 | Method | Path | Headers | Success | Error |
 |--------|------|---------|---------|-------|
-| GET | `/api/fragrances/daily_scent/get/` | `Authorization: Bearer <access_token>` | `200` — `{ "daily_scents" }` | `401` invalid token; `500` Redis error |
+| GET | `/api/fragrances/daily_scent/get/all/` | `Authorization: Bearer <access_token>` | `200` — `{ "daily_scents" }` | `401` invalid token; `500` Redis error |
 
 #### Success response (200)
 
 ```json
 {
   "daily_scents": [
-    { "day": "2024-02-28", "perfume_id": "123" },
-    { "day": "2024-02-27", "perfume_id": "456" }
+    { "day": "2024-02-27", "perfume": { /* fragrance object */ } },
+    { "day": "2024-02-28", "perfume": { /* fragrance object */ } }
   ]
 }
 ```
@@ -378,6 +382,73 @@ Returns all daily scent entries for the authenticated user. Requires `Authorizat
 ```
 
 ---
+
+### Get daily scent for a day (GET)
+
+Returns the fragrance worn for a single day for the authenticated user. Requires `Authorization: Bearer <access_token>`.
+
+| Method | Path | Headers | Query params | Success | Error |
+|--------|------|---------|--------------|---------|-------|
+| GET | `/api/fragrances/daily_scent/get/` | `Authorization: Bearer <access_token>` | `timestamp` (required) | `200` — `{ "daily_scent": <fragrance> }` | `401` invalid token; `500` Redis/parse error |
+
+#### Query parameters
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `timestamp` | string | Yes | ISO 8601 datetime string (e.g. `"2026-03-01T00:00:00"`). The server derives the day as `YYYY-MM-DD` (UTC). |
+
+#### Example request
+
+```http
+GET /api/fragrances/daily_scent/get/?timestamp=2026-03-01T00:00:00
+Authorization: Bearer <access_token>
+```
+
+#### Success response (200)
+
+```json
+{ "daily_scent": { /* fragrance object */ } }
+```
+
+---
+
+### Get recommendations (POST)
+
+Returns weather info plus 3 fragrance recommendations (includes a computed `score` and `in_collection` flag). Requires `Authorization: Bearer <access_token>`.
+
+> Note: the route is currently spelled `/api/fragrances/reccomendations` (double “c”) in the backend URL config.
+
+| Method | Path | Headers | Body | Success | Error |
+|--------|------|---------|------|---------|-------|
+| POST | `/api/fragrances/reccomendations` | `Authorization: Bearer <access_token>` | JSON (see below) | `200` — `{ "weather", "collection", "recommendations" }` | `400` invalid JSON / missing coordinates; `401` invalid token; `500` weather fetch error |
+
+#### Request body
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `coordinates` | object | Yes | `{ "latitude": <number>, "longitude": <number> }` |
+
+#### Example request
+
+```http
+POST /api/fragrances/reccomendations
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{ "coordinates": { "latitude": 40.7128, "longitude": -74.0060 } }
+```
+
+#### Success response (200)
+
+```json
+{
+  "weather": { /* current weather fields */ },
+  "collection": [ { /* fragrance object */ } ],
+  "recommendations": [
+    { /* fragrance object */, "score": 6.123, "in_collection": false }
+  ]
+}
+```
 
 ## Reviews API (`/api/reviews/`)
 

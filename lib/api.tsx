@@ -1,7 +1,8 @@
 // lib/api.ts
-export const API_BASE_URL = "http://192.168.1.33:8000";
+export const API_BASE_URL = "http://10.0.0.14:8000";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  console.log(`${API_BASE_URL}${path}`)
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: {

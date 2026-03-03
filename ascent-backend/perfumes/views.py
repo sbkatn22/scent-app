@@ -20,7 +20,9 @@ from retry_requests import retry
 from upstash_redis import Redis
 import os
 import uuid
-
+from django.views.decorators.http import require_http_methods
+from user.models import Profile
+from .models import PerfumeCollected, Perfume
 from helpers import _parse_json_body, _parse_json_body_optional, _get_profile_by_uid, _get_uid_from_bearer, _profile_to_dict, _fragrance_to_dict
 import openmeteo_requests
 
@@ -241,8 +243,8 @@ def create_daily_scent(request):
     perfume_id = body.get("perfume_id")
     timestamp = body.get("timestamp")
 
-    if not all([perfume_id, timestamp]):
-        return JsonResponse({"error": "perfume_id, and timestamp are required"}, status=400)
+    if not all([timestamp]):
+        return JsonResponse({"error": "timestamp are required"}, status=400)
 
     try:
         if isinstance(timestamp, (int, float)):
@@ -254,6 +256,9 @@ def create_daily_scent(request):
         return JsonResponse({"error": f"Invalid timestamp: {e}"}, status=400)
 
     key = f"daily_scent:{user_id}:{day_str}"
+    if not perfume_id:
+        redis.delete(key)
+        return  JsonResponse({"message": "deleted key"}, status=201)
 
     try:
         redis.set(key, str(perfume_id), ex=TTL_SECONDS)
@@ -263,8 +268,37 @@ def create_daily_scent(request):
     return JsonResponse({"day": day_str, "perfume_id": perfume_id}, status=201)
 
 
+def get_day_scent_for_user(timestamp, user_id):
+    if isinstance(timestamp, (int, float)):
+        dt = datetime.utcfromtimestamp(timestamp)
+    else:
+        dt = datetime.fromisoformat(timestamp)
+    day_str = dt.strftime("%Y-%m-%d")
+        # SCAN keys pattern instead of KEYS (recommended in Upstash)
+    value = redis.get(f"daily_scent:{user_id}:{day_str}")
+    if not value:
+        return None
+    perf_obj = _fragrance_to_dict(Perfume.objects.get(id=int(value)))
+    return perf_obj
+
+@require_GET
+def get_day_scent(request):
+    """
+    Get all daily scents for a user.
+    """
+    user_id, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+    timestamp = request.GET.get("timestamp")
+    try:
+        perf_obj = get_day_scent_for_user(user_id=user_id, timestamp=timestamp)
+    except Exception as e:
+        return JsonResponse({"error": "Failed to fetch from Redis", "detail": str(e)}, status=500)
+    return JsonResponse({"daily_scent": perf_obj}, status=200)
+
 @require_GET
 def get_daily_scents(request):
+
     """
     Get all daily scents for a user.
     """
@@ -287,17 +321,13 @@ def get_daily_scents(request):
             perfume_id = redis.get(key)
             day = key.split(":")[-1]
             if perfume_id:
-                results.append({"day": day, "perfume_id": perfume_id})
+                results.append({"day": day, "perfume": _fragrance_to_dict(Perfume.objects.get(id=int(perfume_id)))})
 
     except Exception as e:
         return JsonResponse({"error": "Failed to fetch from Redis", "detail": str(e)}, status=500)
 
     results.sort(key=lambda x: x["day"])
     return JsonResponse({"daily_scents": results}, status=200)
-from django.views.decorators.http import require_http_methods
-from user.models import Profile
-from .models import PerfumeCollected, Perfume
-
 # -------------------------
 # Perfume collection endpoints
 # -------------------------
