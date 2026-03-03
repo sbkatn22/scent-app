@@ -1,10 +1,12 @@
 // components/fragrance-detail-modal.tsx
 
 import { Ionicons } from "@expo/vector-icons";
+import { Picker } from "@react-native-picker/picker";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -28,6 +30,14 @@ type FragranceDetailModalProps = {
   visible: boolean;
   onClose: () => void;
 };
+
+// Size options matching backend PerfumeCollected.PerfumeSize
+const PERFUME_SIZES = [
+  { value: "SAMPLE", label: "Sample" },
+  { value: "DECANT", label: "Decant" },
+  { value: "MINI", label: "Mini" },
+  { value: "BOTTLE", label: "Bottle" },
+] as const;
 
 function prettyList(arr?: string[]) {
   if (!arr || arr.length === 0) return "—";
@@ -156,18 +166,42 @@ export function FragranceDetailModal({
 
   // ===== Perfume Card Actions =====
   const [actionLoading, setActionLoading] = useState(false);
+  const [addToCollectionVisible, setAddToCollectionVisible] = useState(false);
+  const [addToCollectionSize, setAddToCollectionSize] = useState<string>("BOTTLE");
   const inCollection = selected ? collectionIds.includes(selected.id) : false;
   const isTodayScent = selected ? dailyScentId === selected.id : false;
 
-  const toggleCollection = async () => {
+  const openAddToCollectionPopup = () => {
+    setAddToCollectionSize("BOTTLE");
+    setAddToCollectionVisible(true);
+  };
+
+  const confirmAddToCollection = async () => {
     if (!selected?.id) return;
     setActionLoading(true);
+    setAddToCollectionVisible(false);
     try {
-      await toggleCollectionContext(selected.id);
+      await toggleCollectionContext(selected.id, addToCollectionSize);
     } catch (err) {
       console.log("🟥 toggleCollection failed", err);
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const toggleCollection = async () => {
+    if (!selected?.id) return;
+    if (inCollection) {
+      setActionLoading(true);
+      try {
+        await toggleCollectionContext(selected.id, selected.size);
+      } catch (err) {
+        console.log("🟥 toggleCollection failed", err);
+      } finally {
+        setActionLoading(false);
+      }
+    } else {
+      openAddToCollectionPopup();
     }
   };
 
@@ -201,6 +235,10 @@ export function FragranceDetailModal({
                 {(selected?.gender || "—").toUpperCase()} • {selected?.country || "—"}
                 {selected?.year ? ` • ${selected.year}` : ""}
               </Text>
+              {selected?.size &&
+              <Text style={styles.detailMeta}>
+                {`OWNED: ${selected?.size}`}
+              </Text> }
             </View>
 
             <Pressable onPress={onClose} hitSlop={10}>
@@ -372,6 +410,53 @@ export function FragranceDetailModal({
           )}
         </ScrollView>
       </View>
+
+      {/* Add to collection – size picker popup */}
+      <Modal
+        visible={addToCollectionVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAddToCollectionVisible(false)}
+      >
+        <Pressable
+          style={styles.addPopupBackdrop}
+          onPress={() => setAddToCollectionVisible(false)}
+        >
+          <Pressable style={styles.addPopupCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.addPopupTitle}>Add to collection</Text>
+            <Text style={styles.addPopupLabel}>Size</Text>
+            <View style={styles.pickerWrapper}>
+              <Picker
+                selectedValue={addToCollectionSize}
+                onValueChange={(v) => setAddToCollectionSize(v as string)}
+                style={styles.picker}
+                itemStyle={Platform.OS === "ios" ? styles.pickerItem : undefined}
+                color="#111"
+                mode="dropdown"
+              >
+                {PERFUME_SIZES.map(({ value, label }) => (
+                  <Picker.Item key={value} label={label} value={value} />
+                ))}
+              </Picker>
+            </View>
+            <View style={styles.addPopupActions}>
+              <TouchableOpacity
+                style={styles.addPopupCancel}
+                onPress={() => setAddToCollectionVisible(false)}
+              >
+                <Text style={styles.addPopupCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.addPopupConfirm}
+                onPress={confirmAddToCollection}
+                disabled={actionLoading}
+              >
+                <Text style={styles.addPopupConfirmText}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </Modal>
   );
 }
@@ -485,4 +570,54 @@ const styles = StyleSheet.create({
   errorText: { color: "#b00020", fontWeight: "800", flex: 1 },
   retryBtn: { backgroundColor: "#111", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
   retryText: { color: "#fff", fontWeight: "800" },
+
+  addPopupBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  addPopupCard: {
+    width: "100%",
+    maxWidth: 320,
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    padding: 20,
+  },
+  addPopupTitle: { fontSize: 18, fontWeight: "800", color: "#111", marginBottom: 16 },
+  addPopupLabel: { fontSize: 13, fontWeight: "700", color: "#666", marginBottom: 8 },
+  pickerWrapper: {
+    backgroundColor: "#f2f2f2",
+    borderRadius: 12,
+    marginBottom: 20,
+    overflow: "hidden",
+    justifyContent: "center",
+  },
+  picker: {
+    height: Platform.OS === "android" ? 48 : 120,
+    color: "#111",
+    justifyContent: "center",
+    ...(Platform.OS === "android" && { width: "100%" }),
+  },
+  pickerItem: { fontSize: 16, color: "#111" },
+  addPopupActions: { flexDirection: "row", gap: 12 },
+  addPopupCancel: {
+    flex: 1,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "#f2f2f2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addPopupCancelText: { color: "#111", fontWeight: "700", fontSize: 15 },
+  addPopupConfirm: {
+    flex: 1,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "#111",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addPopupConfirmText: { color: "#fff", fontWeight: "800", fontSize: 15 },
 });

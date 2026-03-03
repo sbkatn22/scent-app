@@ -23,7 +23,7 @@ type CollectionContextValue = {
   setDailyScent: (item: CollectionItem | null) => void;
   refetchCollection: () => Promise<void>;
   refetchDailyScent: () => Promise<void>;
-  toggleCollection: (perfumeId: number) => Promise<void>;
+  toggleCollection: (perfumeId: number, size?: string) => Promise<void>;
   setTodayScent: (perfumeId: number | null) => Promise<void>;
 };
 
@@ -55,9 +55,11 @@ export function CollectionProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const toggleCollection = useCallback(
-    async (perfumeId: number) => {
+    async (perfumeId: number, size?: string) => {
       try {
-        await http.post("/api/fragrances/collection/toggle/", { perfume_id: perfumeId });
+        const body: { perfume_id: number; size?: string } = { perfume_id: perfumeId };
+        if (size) body.size = size;
+        await http.post("/api/fragrances/collection/toggle/", body);
         await refetchCollection();
       } catch (err) {
         console.log("🟥 toggleCollection failed", err);

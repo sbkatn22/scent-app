@@ -1,5 +1,6 @@
 from django.db import models
 
+
 class Profile(models.Model):
     class Gender(models.TextChoices):
         FEMALE = "Female", "Female"
@@ -26,6 +27,10 @@ class Profile(models.Model):
         symmetrical=False,
         related_name='following',
         blank=True
+    )
+    wishlist = models.ManyToManyField(
+        "perfumes.Perfume",
+        blank=True,
     )
 
     class Meta:

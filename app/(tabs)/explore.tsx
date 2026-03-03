@@ -180,22 +180,6 @@ export default function ExploreScreen() {
           {(item.brand ?? "").replaceAll("-", " ")}
         </Text>
         {item.size && <Text style={styles.collectionBrand}>{item.size}</Text>}
-
-        <TouchableOpacity
-          style={[styles.primaryBtn, { marginTop: 8 }]}
-          onPress={() => toggleCollection(item.id)}
-        >
-          <Text style={styles.primaryBtnText}>
-            {inCollection ? "Remove" : "Add"}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.primaryBtn, { marginTop: 6 }]}
-          onPress={() => setTodayScent(item.id)}
-        >
-          <Text style={styles.primaryBtnText}>{today ? "Today's Scent" : "Set Today"}</Text>
-        </TouchableOpacity>
       </TouchableOpacity>
     );
   };
