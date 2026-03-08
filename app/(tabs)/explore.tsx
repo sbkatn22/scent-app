@@ -1,14 +1,15 @@
 // app/(tabs)/explore.tsx
 
-import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useCollection } from "@/contexts/collection-context";
+import { http } from "@/lib/http";
+import * as Location from "expo-location";
 import { useRouter } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Modal,
-  Pressable,
+  Image,
+  RefreshControl,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -17,85 +18,29 @@ import {
   View,
 } from "react-native";
 
-import { getMe, Profile } from "@/lib/user"; // ✅ Step 1: getMe() calls /api/user/me via axios http instance
+import { FragranceDetailModal, FragranceForModal } from "@/components/fragrance-detail-modal";
 
-type Fragrance = {
-  id: string;
-  name: string;
-  brand: string;
-  image?: string; // placeholder now, DB later
+// -------------------------
+// TYPES
+// -------------------------
+type Profile = any;
+
+export type Perfume = FragranceForModal & {
+  id: number;
+  name?: string;
+  image_url?: string;
+  score?: number;
+  size?: string;
+  added_on?: string;
+  brand?: string;
 };
 
-type FriendWear = {
-  id: string;
-  name: string;
-  wearing: {
-    fragranceName: string;
-    brand: string;
-  } | null; // null = not set today
-};
+type Recommendation = Perfume & { score: number };
+type Weather = { temperature: number; condition: string };
 
-const MOCK_ALL_FRAGRANCES: Fragrance[] = [
-  {
-    id: "1",
-    name: "Aventus",
-    brand: "Creed",
-    image:
-      "https://images.unsplash.com/photo-1594035910387-fea47794261f?auto=format&fit=crop&w=800&q=60",
-  },
-  {
-    id: "2",
-    name: "Bleu de Chanel",
-    brand: "Chanel",
-    image:
-      "https://images.unsplash.com/photo-1523292562811-8fa7962a78c8?auto=format&fit=crop&w=800&q=60",
-  },
-  {
-    id: "3",
-    name: "Oud Wood",
-    brand: "Tom Ford",
-    image:
-      "https://images.unsplash.com/photo-1615634260167-c8cdede054de?auto=format&fit=crop&w=800&q=60",
-  },
-  {
-    id: "4",
-    name: "Sauvage",
-    brand: "Dior",
-    image:
-      "https://images.unsplash.com/photo-1619994403073-2cec844b8f90?auto=format&fit=crop&w=800&q=60",
-  },
-  {
-    id: "5",
-    name: "One Million",
-    brand: "Paco Rabanne",
-    image:
-      "https://images.unsplash.com/photo-1619994403073-2cec844b8f90?auto=format&fit=crop&w=800&q=60",
-  },
-];
-
-const MOCK_FRIENDS: FriendWear[] = [
-  {
-    id: "f1",
-    name: "Sam",
-    wearing: { fragranceName: "Bleu de Chanel", brand: "Chanel" },
-  },
-  {
-    id: "f2",
-    name: "Maya",
-    wearing: { fragranceName: "Oud Wood", brand: "Tom Ford" },
-  },
-  {
-    id: "f3",
-    name: "Arjun",
-    wearing: { fragranceName: "Sauvage", brand: "Dior" },
-  },
-  {
-    id: "f4",
-    name: "Nia",
-    wearing: null,
-  },
-];
-
+// -------------------------
+// UTILS
+// -------------------------
 function initials(name: string) {
   return name
     .split(" ")
@@ -105,439 +50,270 @@ function initials(name: string) {
     .join("");
 }
 
+// -------------------------
+// COMPONENT
+// -------------------------
 export default function ExploreScreen() {
   const router = useRouter();
+  const {
+    collection,
+    dailyScent,
+    setCollection,
+    setDailyScent,
+    toggleCollection,
+    setTodayScent,
+  } = useCollection();
 
-  // ✅ REAL USER FROM /me (Option B)
+  // STATE (profile, recommendations, weather stay local)
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [profileLoading, setProfileLoading] = useState(true);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [weather, setWeather] = useState<Weather | null>(null);
 
-  // mock: user’s collection (store IDs)
-  const [collectionIds, setCollectionIds] = useState<string[]>(["1", "2", "5"]);
-  const [cologneOfDayId, setCologneOfDayId] = useState<string | null>("5");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [selectedPerfume, setSelectedPerfume] = useState<Perfume | null>(null);
 
-  // modals
-  const [manageModalOpen, setManageModalOpen] = useState(false);
-  const [cotdModalOpen, setCotdModalOpen] = useState(false);
+  // -------------------------
+  // FETCH PROFILE & COLLECTION
+  // -------------------------
+  const loadProfile = async () => {
+    try {
+      const { data } = await http.get("/api/user/me");
+      setProfile(data.profile);
+      setCollection(data.profile.collection || []);
+    } catch (err) {
+      console.log("🟥 loadProfile failed", err);
+    }
+  };
 
-  // ✅ Load profile on mount
+  // -------------------------
+  // FETCH DAILY SCENT (writes to shared context)
+  // -------------------------
+  const loadDailyScent = async () => {
+    try {
+      const now = new Date().toISOString();
+      const { data } = await http.get("/api/fragrances/daily_scent/get/", {
+        params: { timestamp: now },
+      });
+      setDailyScent(data.daily_scent ?? null);
+    } catch (err) {
+      console.log("🟥 loadDailyScent failed", err);
+    }
+  };
+
+  // -------------------------
+  // FETCH WEATHER & RECOMMENDATIONS
+  // -------------------------
+  const loadRecommendations = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
+
+      const location = await Location.getCurrentPositionAsync({});
+      const { data } = await http.post("/api/fragrances/reccomendations", {
+        coordinates: {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        },
+      });
+
+      setWeather(data.weather);
+      setRecommendations(data.recommendations || []);
+    } catch (err) {
+      console.log("🟥 loadRecommendations failed", err);
+    }
+  };
+
+  // -------------------------
+  // INITIAL LOAD
+  // -------------------------
+  const loadAll = async () => {
+    setLoading(true);
+    try {
+      await loadProfile();
+      await loadDailyScent();
+      await loadRecommendations();
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    let alive = true;
+    loadAll();
+  }, []);
 
-    const loadProfile = async () => {
-      try {
-        setProfileLoading(true);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadAll();
+    setRefreshing(false);
+  }, []);
 
-        const me = await getMe(); // uses axios http instance -> auto refresh on 401
-
-        if (!alive) return;
-        setProfile(me);
-
-        // optional cache
-        await AsyncStorage.setItem("profile", JSON.stringify(me));
-      } catch (e) {
-        // refresh failed or token invalid -> logout behavior
-        await AsyncStorage.multiRemove(["access_token", "refresh_token", "profile"]);
-
-        // NOTE: adjust if your auth route differs
-        router.replace("/auth/auth");
-      } finally {
-        if (alive) setProfileLoading(false);
-      }
-    };
-
-    loadProfile();
-
-    return () => {
-      alive = false;
-    };
-  }, [router]);
+  const collectionIds = useMemo(() => collection.map((c) => c.id), [collection]);
+  const isInCollection = (id: number) => collectionIds.includes(id);
+  const isToday = (id: number) => dailyScent?.id === id;
 
   const userName = profile?.username ?? "—";
 
-  const collection = useMemo(
-    () => MOCK_ALL_FRAGRANCES.filter((f) => collectionIds.includes(f.id)),
-    [collectionIds]
-  );
+  // -------------------------
+  // RENDER PERFUME CARD
+  // -------------------------
+  const renderPerfumeCard = ({ item }: { item: Perfume }) => {
+    const today = isToday(item.id);
+    const inCollection = isInCollection(item.id);
 
-  const cologneOfDay = useMemo(
-    () => MOCK_ALL_FRAGRANCES.find((f) => f.id === cologneOfDayId) ?? null,
-    [cologneOfDayId]
-  );
-
-  const toggleInCollection = (id: string) => {
-    setCollectionIds((prev) => {
-      const exists = prev.includes(id);
-      const next = exists ? prev.filter((x) => x !== id) : [...prev];
-
-      // if adding, append
-      const finalNext = exists ? next : [...prev, id];
-
-      // if user removed the selected COTD, clear it
-      if (exists && cologneOfDayId === id) setCologneOfDayId(null);
-
-      return finalNext;
-    });
+    return (
+      <TouchableOpacity
+        style={[styles.collectionCard, today && styles.collectionCardActive]}
+        activeOpacity={0.9}
+        onPress={() => setSelectedPerfume(item)}
+      >
+        {item.image_url && (
+          <Image
+            source={{ uri: item.image_url }}
+            style={{ height: 100, borderRadius: 12, marginBottom: 8 }}
+          />
+        )}
+        <Text style={styles.collectionName}>
+          {(item.fragrance ?? item.name ?? "").replaceAll("-", " ")}
+        </Text>
+        <Text style={styles.collectionBrand}>
+          {(item.brand ?? "").replaceAll("-", " ")}
+        </Text>
+        {item.size && <Text style={styles.collectionBrand}>{item.size}</Text>}
+      </TouchableOpacity>
+    );
   };
 
+  // -------------------------
+  // RENDER ADD CARD
+  // -------------------------
+  const renderAddCard = (onPress: () => void) => (
+    <TouchableOpacity
+      style={[styles.collectionCard, { justifyContent: "center", alignItems: "center" }]}
+      onPress={onPress}
+    >
+      <Text style={{ fontSize: 32, fontWeight: "900", color: "#111" }}>+</Text>
+      <Text style={{ marginTop: 6, fontSize: 13, color: "#666", fontWeight: "700" }}>
+        Add Perfume
+      </Text>
+    </TouchableOpacity>
+  );
+
+  // -------------------------
+  // LOADING
+  // -------------------------
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
+  // -------------------------
+  // RENDER
+  // -------------------------
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 24 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Header */}
         <View style={styles.headerRow}>
           <View style={{ flex: 1, paddingRight: 10 }}>
-            {profileLoading ? (
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                <ActivityIndicator />
-                <Text style={{ color: "#777", fontWeight: "700" }}>Loading profile…</Text>
-              </View>
-            ) : (
-              <>
-                <Text style={styles.greeting}>Hi {userName} 👋</Text>
-                <Text style={styles.subGreeting}>
-                  Here’s your collection and today’s pick.
-                </Text>
-
-                {!!profile?.supabase_uid && (
-                  <Text
-                    style={{ marginTop: 6, fontSize: 12, color: "#999" }}
-                    numberOfLines={1}
-                  >
-                    UID: {profile.supabase_uid}
-                  </Text>
-                )}
-              </>
-            )}
+            <Text style={styles.greeting}>Hi {userName} 👋</Text>
+            <Text style={styles.subGreeting}>Explore your collection and daily picks.</Text>
           </View>
-
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{initials(userName)}</Text>
           </View>
         </View>
 
         {/* Cologne of the Day */}
-        <View style={styles.sectionHeaderRow}>
+        <View style={{ marginHorizontal: 14, marginTop: 22, marginBottom: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <Text style={styles.sectionTitle}>Cologne of the Day</Text>
-          <TouchableOpacity
-            style={styles.linkBtn}
-            onPress={() => setCotdModalOpen(true)}
-          >
-            <Ionicons name="sparkles-outline" size={16} color="#111" />
-            <Text style={styles.linkBtnText}>Choose</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.cotdCard}>
-          {cologneOfDay ? (
-            <>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cotdName}>{cologneOfDay.name}</Text>
-                <Text style={styles.cotdBrand}>{cologneOfDay.brand}</Text>
-                <Text style={styles.cotdHint}>Your pick for today ✅</Text>
-              </View>
-
-              <TouchableOpacity
-                onPress={() => setCologneOfDayId(null)}
-                style={styles.smallIconBtn}
-                hitSlop={10}
-              >
-                <Ionicons name="close" size={18} color="#111" />
-              </TouchableOpacity>
-            </>
-          ) : (
-            <View style={{ flex: 1 }}>
-              <Text style={styles.emptyTitle}>No pick yet</Text>
-              <Text style={styles.emptySubtitle}>
-                Choose one from your collection to set your vibe for today.
-              </Text>
-
-              <TouchableOpacity
-                style={styles.primaryBtn}
-                onPress={() => setCotdModalOpen(true)}
-              >
-                <Ionicons name="sparkles" size={18} color="#fff" />
-                <Text style={styles.primaryBtnText}>
-                  Pick Cologne of the Day
-                </Text>
-              </TouchableOpacity>
-            </View>
+          {dailyScent && (
+            <TouchableOpacity
+              onPress={() => setTodayScent(null)}
+              style={{ paddingVertical: 4, paddingHorizontal: 10, backgroundColor: "#eee", borderRadius: 12 }}
+            >
+              <Text style={{ fontSize: 13, fontWeight: "700", color: "#111" }}>Clear</Text>
+            </TouchableOpacity>
           )}
         </View>
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          data={dailyScent ? [dailyScent] : []}
+          keyExtractor={(item) => item.id.toString()}
+          contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 18 }}
+          renderItem={renderPerfumeCard}
+          ListEmptyComponent={renderAddCard(() => router.push("/search"))}
+        />
 
         {/* Collection */}
-        <View style={styles.sectionHeaderRow}>
+        <View style={{ marginHorizontal: 14, marginTop: 22, marginBottom: 12 }}>
           <Text style={styles.sectionTitle}>Your Collection</Text>
-          <TouchableOpacity
-            style={styles.linkBtn}
-            onPress={() => setManageModalOpen(true)}
-          >
-            <Ionicons name="add-circle-outline" size={16} color="#111" />
-            <Text style={styles.linkBtnText}>Add/Remove</Text>
-          </TouchableOpacity>
         </View>
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          data={[...collection, { id: -1, name: "", image_url: "", brand: "" }]} // Add card at the end
+          keyExtractor={(item) => item.id.toString()}
+          contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 18 }}
+          renderItem={({ item }) =>
+            item.id === -1
+              ? renderAddCard(() => router.push("/search"))
+              : renderPerfumeCard({ item })
+          }
+        />
 
-        {collection.length === 0 ? (
-          <View style={styles.emptyCollection}>
-            <Text style={styles.emptyTitle}>Your collection is empty</Text>
-            <Text style={styles.emptySubtitle}>
-              Add a few fragrances to get started.
-            </Text>
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              onPress={() => setManageModalOpen(true)}
-            >
-              <Ionicons name="add" size={18} color="#fff" />
-              <Text style={styles.primaryBtnText}>Add to Collection</Text>
-            </TouchableOpacity>
+        {/* Daily Recommendations */}
+        <View style={{ marginHorizontal: 14, marginTop: 22, marginBottom: 4 }}>
+          <Text style={styles.sectionTitle}>Daily Recommendations</Text>
+          <Text style={styles.friendSubText}>Based on your weather</Text>
+        </View>
+        {recommendations.length === 0 ? (
+          <View style={[styles.collectionCard, { justifyContent: "center", alignItems: "center", marginHorizontal: 14 }]}>
+            <Text style={styles.emptyTitle}>No recommendations yet</Text>
+            <Text style={styles.emptySubtitle}>Check back later or refresh to get your daily picks.</Text>
           </View>
         ) : (
           <FlatList
             horizontal
-            data={collection}
-            keyExtractor={(item) => item.id}
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ paddingVertical: 6 }}
-            renderItem={({ item }) => {
-              const isToday = item.id === cologneOfDayId;
-              return (
-                <TouchableOpacity
-                  style={[
-                    styles.collectionCard,
-                    isToday && styles.collectionCardActive,
-                  ]}
-                  onPress={() => setCologneOfDayId(item.id)}
-                >
-                  <View style={styles.collectionIcon}>
-                    <Ionicons name="flask-outline" size={18} color="#111" />
-                  </View>
-                  <Text style={styles.collectionName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <Text style={styles.collectionBrand} numberOfLines={1}>
-                    {item.brand}
-                  </Text>
-
-                  {isToday && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>Today</Text>
-                    </View>
-                  )}
-                </TouchableOpacity>
-              );
-            }}
+            data={recommendations}
+            keyExtractor={(item) => item.id.toString()}
+            contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 18 }}
+            renderItem={renderPerfumeCard}
           />
         )}
-
-        {/* Friends Section */}
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Your Friends</Text>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Ionicons name="people-outline" size={16} color="#111" />
-            <Text style={styles.friendSubText}>Wearing today</Text>
-          </View>
-        </View>
-
-        <FlatList
-          horizontal
-          data={MOCK_FRIENDS}
-          keyExtractor={(item) => item.id}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingVertical: 6, paddingBottom: 18 }}
-          renderItem={({ item }) => {
-            return (
-              <View style={styles.friendCard}>
-                <View style={styles.friendTopRow}>
-                  <View style={styles.friendAvatar}>
-                    <Text style={styles.friendAvatarText}>
-                      {initials(item.name)}
-                    </Text>
-                  </View>
-                  <Text style={styles.friendName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                </View>
-
-                {item.wearing ? (
-                  <>
-                    <Text style={styles.friendLabel}>Wearing Today</Text>
-                    <Text style={styles.friendFrag} numberOfLines={1}>
-                      {item.wearing.fragranceName}
-                    </Text>
-                    <Text style={styles.friendBrand} numberOfLines={1}>
-                      {item.wearing.brand}
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <Text style={styles.friendLabel}>No pick yet</Text>
-                    <Text style={styles.friendEmpty}>Ask them to set one 👀</Text>
-                  </>
-                )}
-              </View>
-            );
-          }}
-        />
-
-        {/* ===== Manage Collection Modal ===== */}
-        <Modal
-          visible={manageModalOpen}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setManageModalOpen(false)}
-        >
-          <Pressable
-            style={styles.backdrop}
-            onPress={() => setManageModalOpen(false)}
-          />
-          <View style={styles.sheet}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetTopRow}>
-              <Text style={styles.sheetTitle}>Manage Collection</Text>
-              <Pressable onPress={() => setManageModalOpen(false)} hitSlop={10}>
-                <Ionicons name="close" size={22} color="#111" />
-              </Pressable>
-            </View>
-
-            <Text style={styles.sheetSubtitle}>
-              Tap to add/remove fragrances (mock list for now).
-            </Text>
-
-            <FlatList
-              data={MOCK_ALL_FRAGRANCES}
-              keyExtractor={(item) => item.id}
-              contentContainerStyle={{ paddingBottom: 24 }}
-              renderItem={({ item }) => {
-                const inCollection = collectionIds.includes(item.id);
-                return (
-                  <TouchableOpacity
-                    style={styles.rowItem}
-                    onPress={() => toggleInCollection(item.id)}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.rowName}>{item.name}</Text>
-                      <Text style={styles.rowBrand}>{item.brand}</Text>
-                    </View>
-                    <View
-                      style={[
-                        styles.pill,
-                        inCollection ? styles.pillOn : styles.pillOff,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.pillText,
-                          inCollection ? styles.pillTextOn : styles.pillTextOff,
-                        ]}
-                      >
-                        {inCollection ? "In Collection" : "Add"}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              }}
-            />
-          </View>
-        </Modal>
-
-        {/* ===== Choose COTD Modal ===== */}
-        <Modal
-          visible={cotdModalOpen}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setCotdModalOpen(false)}
-        >
-          <Pressable
-            style={styles.backdrop}
-            onPress={() => setCotdModalOpen(false)}
-          />
-          <View style={styles.sheet}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetTopRow}>
-              <Text style={styles.sheetTitle}>Pick Cologne of the Day</Text>
-              <Pressable onPress={() => setCotdModalOpen(false)} hitSlop={10}>
-                <Ionicons name="close" size={22} color="#111" />
-              </Pressable>
-            </View>
-
-            {collection.length === 0 ? (
-              <View style={{ paddingVertical: 16 }}>
-                <Text style={styles.emptyTitle}>No items in your collection</Text>
-                <Text style={styles.emptySubtitle}>
-                  Add fragrances first, then pick one for today.
-                </Text>
-                <TouchableOpacity
-                  style={[
-                    styles.primaryBtn,
-                    { alignSelf: "flex-start", marginTop: 10 },
-                  ]}
-                  onPress={() => {
-                    setCotdModalOpen(false);
-                    setManageModalOpen(true);
-                  }}
-                >
-                  <Ionicons name="add" size={18} color="#fff" />
-                  <Text style={styles.primaryBtnText}>Add to Collection</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <FlatList
-                data={collection}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={{ paddingBottom: 24 }}
-                renderItem={({ item }) => {
-                  const isSelected = item.id === cologneOfDayId;
-                  return (
-                    <TouchableOpacity
-                      style={[
-                        styles.rowItem,
-                        isSelected && { borderColor: "#111", borderWidth: 1 },
-                      ]}
-                      onPress={() => {
-                        setCologneOfDayId(item.id);
-                        setCotdModalOpen(false);
-                      }}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.rowName}>{item.name}</Text>
-                        <Text style={styles.rowBrand}>{item.brand}</Text>
-                      </View>
-                      {isSelected ? (
-                        <Ionicons
-                          name="checkmark-circle"
-                          size={22}
-                          color="#111"
-                        />
-                      ) : (
-                        <Ionicons name="chevron-forward" size={18} color="#999" />
-                      )}
-                    </TouchableOpacity>
-                  );
-                }}
-              />
-            )}
-          </View>
-        </Modal>
       </ScrollView>
+
+      <FragranceDetailModal
+        fragrance={selectedPerfume}
+        visible={!!selectedPerfume}
+        onClose={() => setSelectedPerfume(null)}
+      />
     </SafeAreaView>
   );
 }
 
+// -------------------------
+// STYLES
+// -------------------------
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
-  content: {
-    paddingHorizontal: 24,
-    paddingTop: 18,
-    paddingBottom: 28,
-  },
+  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
 
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 14,
+    marginHorizontal: 24,
+    marginTop: 18,
+    marginBottom: 16,
   },
   greeting: { fontSize: 24, fontWeight: "800", color: "#111" },
   subGreeting: { fontSize: 14, color: "#777", marginTop: 6 },
@@ -552,188 +328,29 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: "#fff", fontWeight: "800" },
 
-  sectionHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 22,
-    marginBottom: 12,
-  },
-  sectionTitle: { fontSize: 17, fontWeight: "800", color: "#111" },
+  sectionTitle: { fontSize: 18, fontWeight: "bold", color: "#111" },
+  friendSubText: { fontSize: 14, color: "#555", marginTop: 2 },
 
-  linkBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 999,
-    backgroundColor: "#f2f2f2",
-  },
-  linkBtnText: { fontSize: 13, fontWeight: "700", color: "#111" },
-
-  cotdCard: {
+  collectionCard: {
+    width: 180,
     backgroundColor: "#fafafa",
-    borderRadius: 18,
-    padding: 18,
-    flexDirection: "row",
-    gap: 10,
+    borderRadius: 16,
+    padding: 14,
+    marginRight: 14,
   },
-  cotdName: { fontSize: 18, fontWeight: "900", color: "#111" },
-  cotdBrand: { fontSize: 14, color: "#666", marginTop: 2 },
-  cotdHint: { fontSize: 12.5, color: "#444", marginTop: 8 },
-
-  smallIconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 999,
-    backgroundColor: "#f2f2f2",
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  collectionCardActive: { borderWidth: 1.5, borderColor: "#111" },
+  collectionName: { fontSize: 15, fontWeight: "900", color: "#111" },
+  collectionBrand: { fontSize: 13, color: "#666", marginTop: 3 },
 
   primaryBtn: {
-    marginTop: 12,
+    marginTop: 6,
     backgroundColor: "#111",
     borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    flexDirection: "row",
+    paddingVertical: 8,
     alignItems: "center",
-    gap: 8,
-    alignSelf: "flex-start",
   },
   primaryBtnText: { color: "#fff", fontWeight: "800" },
 
   emptyTitle: { fontSize: 16, fontWeight: "800", color: "#111" },
-  emptySubtitle: {
-    fontSize: 13.5,
-    color: "#666",
-    marginTop: 6,
-    lineHeight: 18,
-  },
-
-  emptyCollection: {
-    backgroundColor: "#fafafa",
-    borderRadius: 16,
-    padding: 14,
-  },
-
-  collectionCard: {
-    width: 145,
-    backgroundColor: "#fafafa",
-    borderRadius: 16,
-    padding: 14,
-    marginRight: 14,
-    overflow: "hidden",
-  },
-  collectionCardActive: {
-    borderWidth: 1.5,
-    borderColor: "#111",
-  },
-  collectionIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
-    backgroundColor: "#f2f2f2",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-  },
-  collectionName: { fontSize: 15, fontWeight: "900", color: "#111" },
-  collectionBrand: { fontSize: 13, color: "#666", marginTop: 3 },
-
-  badge: {
-    position: "absolute",
-    top: 10,
-    right: 10,
-    backgroundColor: "#111",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-  badgeText: { color: "#fff", fontSize: 12, fontWeight: "800" },
-
-  // Friends
-  friendSubText: { fontSize: 13, fontWeight: "700", color: "#111" },
-  friendCard: {
-    width: 175,
-    backgroundColor: "#fafafa",
-    borderRadius: 16,
-    padding: 14,
-    marginRight: 14,
-  },
-  friendTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 10,
-  },
-  friendAvatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 999,
-    backgroundColor: "#111",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  friendAvatarText: { color: "#fff", fontWeight: "900", fontSize: 12 },
-  friendName: { fontSize: 15, fontWeight: "900", color: "#111", flex: 1 },
-
-  friendLabel: { fontSize: 12.5, color: "#666", marginBottom: 6 },
-  friendFrag: { fontSize: 14.5, fontWeight: "900", color: "#111" },
-  friendBrand: { fontSize: 13.5, color: "#666", marginTop: 4 },
-  friendEmpty: { fontSize: 13.5, color: "#333", fontWeight: "700" },
-
-  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
-  sheet: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: "78%",
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-  },
-  sheetHandle: {
-    width: 44,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: "#ddd",
-    alignSelf: "center",
-    marginBottom: 10,
-  },
-  sheetTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  sheetTitle: { fontSize: 18, fontWeight: "900", color: "#111" },
-  sheetSubtitle: { fontSize: 13, color: "#666", marginBottom: 10 },
-
-  rowItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fafafa",
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
-  },
-  rowName: { fontSize: 15, fontWeight: "900", color: "#111" },
-  rowBrand: { fontSize: 13, color: "#666", marginTop: 3 },
-
-  pill: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-  },
-  pillOn: { backgroundColor: "#111" },
-  pillOff: { backgroundColor: "#eaeaea" },
-  pillText: { fontWeight: "800", fontSize: 12.5 },
-  pillTextOn: { color: "#fff" },
-  pillTextOff: { color: "#111" },
+  emptySubtitle: { fontSize: 13.5, color: "#666", marginTop: 6, lineHeight: 18 },
 });

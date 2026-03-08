@@ -3,6 +3,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import "react-native-reanimated";
 
+import { CollectionProvider } from "@/contexts/collection-context";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 
 // ✅ Use root entry so app/index.tsx controls first screen
@@ -15,6 +16,7 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+      <CollectionProvider>
       {/* ✅ Hide headers globally (prevents "auth/auth" and "(tabs)" back label) */}
       <Stack screenOptions={{ headerShown: false }}>
         {/* Auth */}
@@ -31,6 +33,7 @@ export default function RootLayout() {
       </Stack>
 
       <StatusBar style="auto" />
+      </CollectionProvider>
     </ThemeProvider>
   );
 }

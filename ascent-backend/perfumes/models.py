@@ -3,7 +3,6 @@ Perfume/Fragrance model based on the fra_cleaned.csv dataset.
 Includes all fields from the dataset.
 """
 from django.db import models
-from user.models import Profile
 from django.contrib.postgres.indexes import GinIndex
 
 
@@ -81,7 +80,7 @@ class PerfumeCollected(models.Model):
         BOTTLE = "BOTTLE", "Bottle"
 
     profile = models.ForeignKey(
-        Profile, on_delete=models.CASCADE, related_name="collection"
+        "user.Profile", on_delete=models.CASCADE, related_name="collection"
     )
     perfume = models.ForeignKey(Perfume, on_delete=models.CASCADE)
     perfume_size = models.CharField(

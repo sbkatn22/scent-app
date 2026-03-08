@@ -12,7 +12,7 @@ from django.views.decorators.http import require_http_methods
 from .models import Profile
 from .supabase_client import get_supabase_admin
 from helpers import _parse_json_body, _parse_json_body_optional, _get_profile_by_uid, _get_uid_from_bearer, _profile_to_dict, _fragrance_to_dict, _summarized_profiles_from_queryset
-
+from perfumes.views import get_day_scent_for_user
 
 
 
@@ -243,3 +243,20 @@ def get_followers(request):
     followers = _summarized_profiles_from_queryset(profile.followers.all())
     return JsonResponse({"followers": followers}, status=200)
      
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_followers_scents(request):
+    uid, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+    profile, err = _get_profile_by_uid(uid)
+    if err:
+        return err
+    following = _summarized_profiles_from_queryset(profile.following.all())
+    timestamp = request.GET.get("timestamp")
+    for follower in following:
+        scent = get_day_scent_for_user(user_id=follower.uid, timestamp=timestamp)
+        follower["daily_scent"] = scent
+    return JsonResponse({"following": following}, status=200)
+
