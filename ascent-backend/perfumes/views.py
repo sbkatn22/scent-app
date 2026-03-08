@@ -13,13 +13,14 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
-from .models import Perfume, PerfumeCollected
+from .models import Perfume, PerfumeCollected, DailyScent
 from reviews.models import Review
 import requests_cache
 from retry_requests import retry
 from upstash_redis import Redis
 import os
 import uuid
+from pathlib import Path
 from django.views.decorators.http import require_http_methods
 from user.models import Profile
 from .models import PerfumeCollected, Perfume
@@ -35,13 +36,35 @@ open_meteo_url = "https://api.open-meteo.com/v1/forecast"
 cache_session = requests_cache.CachedSession('.cache', expire_after = 3600)
 retry_session = retry(cache_session, retries = 5, backoff_factor = 0.2)
 openmeteo = openmeteo_requests.Client(session = retry_session)
-# ------------------------- 
-# Upstash Redis REST client
+
 # -------------------------
-redis = Redis(
-    url=os.environ.get("UPSTASH_REDIS_REST_URL"),
-    token=os.environ.get("UPSTASH_REDIS_REST_TOKEN")
-)
+# Upstash Redis (lazy) + DB fallback for daily scent
+# -------------------------
+_redis_client = None
+
+def get_redis():
+    """Lazy Redis client. Loads .env so vars are set when running server from any cwd. Returns None if Redis is unavailable."""
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    try:
+        from dotenv import load_dotenv
+        env_path = Path(__file__).resolve().parent.parent / "ascentdjango" / ".env"
+        load_dotenv(env_path)
+    except Exception:
+        pass
+    url = os.environ.get("UPSTASH_REDIS_REST_URL")
+    token = os.environ.get("UPSTASH_REDIS_REST_TOKEN")
+    if not url or not token:
+        _redis_client = False  # mark as "checked, not available"
+        return None
+    try:
+        _redis_client = Redis(url=url, token=token)
+        return _redis_client
+    except Exception:
+        _redis_client = False
+        return None
+
 TTL_SECONDS = 32 * 24 * 60 * 60  # 32 days
 
 
@@ -252,34 +275,65 @@ def create_daily_scent(request):
         else:
             dt = datetime.fromisoformat(timestamp)
         day_str = dt.strftime("%Y-%m-%d")
+        day_date = dt.date()
     except Exception as e:
         return JsonResponse({"error": f"Invalid timestamp: {e}"}, status=400)
 
-    key = f"daily_scent:{user_id}:{day_str}"
+    user_id_str = str(user_id)
+    key = f"daily_scent:{user_id_str}:{day_str}"
+
     if not perfume_id:
-        redis.delete(key)
-        return  JsonResponse({"message": "deleted key"}, status=201)
+        redis_client = get_redis()
+        if redis_client:
+            try:
+                redis_client.delete(key)
+            except Exception:
+                pass
+        DailyScent.objects.filter(user_id=user_id_str, day=day_date).delete()
+        return JsonResponse({"message": "deleted key"}, status=201)
+
+    # Try Redis first; fall back to DB on failure or if Redis unavailable
+    redis_client = get_redis()
+    if redis_client:
+        try:
+            redis_client.set(key, str(perfume_id), ex=TTL_SECONDS)
+            return JsonResponse({"day": day_str, "perfume_id": perfume_id}, status=201)
+        except Exception:
+            pass  # fall through to DB fallback
 
     try:
-        redis.set(key, str(perfume_id), ex=TTL_SECONDS)
-    except Exception as e:
-        return JsonResponse({"error": "Failed to set value in Redis", "detail": str(e)}, status=500)
-
+        perfume = Perfume.objects.get(id=perfume_id)
+    except Perfume.DoesNotExist:
+        return JsonResponse({"error": "Perfume not found"}, status=400)
+    DailyScent.objects.update_or_create(
+        user_id=user_id_str, day=day_date, defaults={"perfume": perfume}
+    )
     return JsonResponse({"day": day_str, "perfume_id": perfume_id}, status=201)
 
 
 def get_day_scent_for_user(timestamp, user_id):
+    if timestamp is None:
+        return None
     if isinstance(timestamp, (int, float)):
         dt = datetime.utcfromtimestamp(timestamp)
     else:
         dt = datetime.fromisoformat(timestamp)
     day_str = dt.strftime("%Y-%m-%d")
-        # SCAN keys pattern instead of KEYS (recommended in Upstash)
-    value = redis.get(f"daily_scent:{user_id}:{day_str}")
-    if not value:
+    day_date = dt.date()
+    user_id_str = str(user_id)
+    redis_client = get_redis()
+    if redis_client:
+        try:
+            value = redis_client.get(f"daily_scent:{user_id_str}:{day_str}")
+            if value:
+                return _fragrance_to_dict(Perfume.objects.get(id=int(value)))
+        except Exception:
+            pass
+    try:
+        row = DailyScent.objects.get(user_id=user_id_str, day=day_date)
+        return _fragrance_to_dict(row.perfume)
+    except DailyScent.DoesNotExist:
         return None
-    perf_obj = _fragrance_to_dict(Perfume.objects.get(id=int(value)))
-    return perf_obj
 
 @require_GET
 def get_day_scent(request):
@@ -298,33 +352,35 @@ def get_day_scent(request):
 
 @require_GET
 def get_daily_scents(request):
-
     """
     Get all daily scents for a user.
     """
     user_id, err = _get_uid_from_bearer(request)
     if err:
         return err
+    user_id_str = str(user_id)
+    results = []
+    redis_client = get_redis()
+    if redis_client:
+        try:
+            cursor = 0
+            keys = []
+            while True:
+                cursor, batch = redis_client.scan(cursor=cursor, match=f"daily_scent:{user_id_str}:*")
+                keys.extend(batch)
+                if cursor == 0:
+                    break
+            for key in keys:
+                perfume_id = redis_client.get(key)
+                day = key.split(":")[-1]
+                if perfume_id:
+                    results.append({"day": day, "perfume": _fragrance_to_dict(Perfume.objects.get(id=int(perfume_id)))})
+        except Exception:
+            results = []  # fall through to DB fallback
 
-    try:
-        # SCAN keys pattern instead of KEYS (recommended in Upstash)
-        cursor = 0
-        keys = []
-        while True:
-            cursor, batch = redis.scan(cursor=cursor, match=f"daily_scent:{user_id}:*")
-            keys.extend(batch)
-            if cursor == 0:
-                break
-
-        results = []
-        for key in keys:
-            perfume_id = redis.get(key)
-            day = key.split(":")[-1]
-            if perfume_id:
-                results.append({"day": day, "perfume": _fragrance_to_dict(Perfume.objects.get(id=int(perfume_id)))})
-
-    except Exception as e:
-        return JsonResponse({"error": "Failed to fetch from Redis", "detail": str(e)}, status=500)
+    if not results:
+        for row in DailyScent.objects.filter(user_id=user_id_str).order_by("-day"):
+            results.append({"day": row.day.strftime("%Y-%m-%d"), "perfume": _fragrance_to_dict(row.perfume)})
 
     results.sort(key=lambda x: x["day"])
     return JsonResponse({"daily_scents": results}, status=200)

@@ -6,6 +6,7 @@ import json
 import uuid
 
 from django.http import JsonResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
@@ -256,7 +257,82 @@ def get_followers_scents(request):
     following = _summarized_profiles_from_queryset(profile.following.all())
     timestamp = request.GET.get("timestamp")
     for follower in following:
-        scent = get_day_scent_for_user(user_id=follower.uid, timestamp=timestamp)
+        scent = get_day_scent_for_user(user_id=follower["uid"], timestamp=timestamp)
         follower["daily_scent"] = scent
     return JsonResponse({"following": following}, status=200)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def search_users(request):
+    """
+    Search users by username (case-insensitive partial match).
+    Requires Authorization: Bearer <access_token>.
+    """
+    uid, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    query = (request.GET.get("q") or "").strip()
+    if not query:
+        return JsonResponse({"results": []}, status=200)
+
+    qs = Profile.objects.filter(username__icontains=query)
+    # Optionally exclude the current user from results
+    qs = qs.exclude(supabase_uid=uid)[:20]
+    results = _summarized_profiles_from_queryset(qs)
+    return JsonResponse({"results": results}, status=200)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def get_public_profile(request):
+    """
+    Get another user's profile by Supabase UID or username.
+    Requires Authorization: Bearer <access_token>.
+    """
+    _, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    target_uid = (request.GET.get("uid") or "").strip()
+    username = (request.GET.get("username") or "").strip()
+
+    if not target_uid and not username:
+        return JsonResponse({"error": "uid or username is required"}, status=400)
+
+    profile = None
+    if target_uid:
+        try:
+            uid_obj = uuid.UUID(target_uid)
+        except ValueError:
+            return JsonResponse({"error": "Invalid uid"}, status=400)
+        profile, err = _get_profile_by_uid(uid_obj)
+        if err:
+            return err
+    else:
+        try:
+            profile = Profile.objects.get(username=username)
+        except Profile.DoesNotExist:
+            return JsonResponse({"error": "User not found."}, status=404)
+
+    # Optional timestamp for which day's scent to show; defaults to "now"
+    raw_timestamp = (request.GET.get("timestamp") or "").strip()
+    if raw_timestamp:
+        ts = raw_timestamp
+    else:
+        ts = timezone.now().isoformat()
+
+    try:
+        daily_scent = get_day_scent_for_user(timestamp=ts, user_id=profile.supabase_uid)
+    except Exception:
+        daily_scent = None
+
+    return JsonResponse(
+        {
+            "profile": _profile_to_dict(profile),
+            "daily_scent": daily_scent,
+        },
+        status=200,
+    )
 

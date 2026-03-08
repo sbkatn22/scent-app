@@ -97,3 +97,20 @@ class PerfumeCollected(models.Model):
 
     def __str__(self):
         return f"{self.profile.username} - {self.perfume.perfume}"
+
+
+class DailyScent(models.Model):
+    """Fallback storage for daily scent when Redis is unavailable. One row per user per day."""
+    user_id = models.CharField(max_length=36, db_index=True)  # Supabase UUID string
+    day = models.DateField()
+    perfume = models.ForeignKey(Perfume, on_delete=models.CASCADE)
+
+    class Meta:
+        db_table = "daily_scent"
+        constraints = [
+            models.UniqueConstraint(fields=["user_id", "day"], name="unique_user_day"),
+        ]
+        ordering = ["-day"]
+
+    def __str__(self):
+        return f"{self.user_id} {self.day}: {self.perfume.perfume}"
