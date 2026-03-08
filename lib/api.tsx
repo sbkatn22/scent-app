@@ -1,5 +1,5 @@
 // lib/api.ts
-export const API_BASE_URL = "http://192.168.1.33:8000";
+export const API_BASE_URL = "http://192.168.4.54:8000";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
@@ -13,9 +13,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-  console.log("API ERROR:", path, res.status, data);
-  throw new Error((data as any)?.error || `Request failed (${res.status})`);
-}
+    console.log("API ERROR:", path, res.status, data);
+    throw new Error((data as any)?.error || `Request failed (${res.status})`);
+  }
 
   return data as T;
 }
