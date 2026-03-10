@@ -1,9 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,8 +16,11 @@ import {
   searchUsers,
   getFollowing,
   getFollowers,
+  getFragranceById,
   type UserSummary,
+  type FragranceApiItem,
 } from "../../lib/api";
+import { getMyReviews, type Review } from "../../lib/reviews";
 
 type Profile = {
   id: number;
@@ -39,6 +44,10 @@ export default function ProfileHomeScreen() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
+  const [myReviews, setMyReviews] = useState<Review[]>([]);
+  const [fragranceNames, setFragranceNames] = useState<Record<number, FragranceApiItem>>({});
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -56,9 +65,10 @@ export default function ProfileHomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      const loadCounts = async () => {
+      const loadAll = async () => {
         const token = await AsyncStorage.getItem("access_token");
         if (!token) return;
+
         try {
           const [followingRes, followersRes] = await Promise.all([
             getFollowing(token),
@@ -69,9 +79,34 @@ export default function ProfileHomeScreen() {
         } catch {
           // ignore; counts stay 0
         }
+
+        setReviewsLoading(true);
+        try {
+          const reviewsRes = await getMyReviews();
+          const reviews = reviewsRes.results ?? [];
+          setMyReviews(reviews);
+
+          const uniqueFids = [...new Set(reviews.map((r) => r.fid))];
+          const fragranceEntries = await Promise.all(
+            uniqueFids.map((fid) =>
+              getFragranceById(fid)
+                .then((f) => [fid, f] as const)
+                .catch(() => [fid, null] as const)
+            )
+          );
+          const nameMap: Record<number, FragranceApiItem> = {};
+          for (const [fid, fragrance] of fragranceEntries) {
+            if (fragrance) nameMap[fid] = fragrance;
+          }
+          setFragranceNames(nameMap);
+        } catch {
+          // ignore; reviews stay empty
+        } finally {
+          setReviewsLoading(false);
+        }
       };
 
-      loadCounts();
+      loadAll();
     }, [])
   );
 
@@ -115,7 +150,7 @@ export default function ProfileHomeScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.container}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Profile</Text>
         <Text style={styles.subtitle}>Account details (from local storage)</Text>
 
@@ -197,10 +232,62 @@ export default function ProfileHomeScreen() {
           </View>
         )}
 
+        {/* Your Reviews */}
+        <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Your Reviews</Text>
+
+        {reviewsLoading ? (
+          <View style={{ marginTop: 12 }}>
+            <ActivityIndicator />
+          </View>
+        ) : myReviews.length === 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.emptyTitle}>No reviews yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Head to the Search tab to find a fragrance and write your first review.
+            </Text>
+          </View>
+        ) : (
+          myReviews.map((review) => {
+            const fragrance = fragranceNames[review.fid];
+            return (
+              <View key={review.id} style={styles.reviewCard}>
+                <View style={styles.reviewCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.reviewFragranceName} numberOfLines={1}>
+                      {fragrance ? fragrance.fragrance.replaceAll("-", " ") : `Fragrance #${review.fid}`}
+                    </Text>
+                    {fragrance && (
+                      <Text style={styles.reviewFragranceBrand} numberOfLines={1}>
+                        {fragrance.brand.replaceAll("-", " ")}
+                      </Text>
+                    )}
+                  </View>
+                  <View style={styles.reviewRatingBadge}>
+                    <Ionicons name="star" size={12} color="#fff" />
+                    <Text style={styles.reviewRatingText}>{Number(review.rating).toFixed(1)}</Text>
+                  </View>
+                </View>
+
+                <Text style={styles.reviewBody} numberOfLines={3}>{review.description}</Text>
+
+                <View style={styles.reviewMeta}>
+                  <Text style={styles.reviewMetaText}>{review.gender}</Text>
+                  <Text style={styles.reviewMetaDot}>·</Text>
+                  <Text style={styles.reviewMetaText}>{review.longevity}</Text>
+                  <Text style={styles.reviewMetaDot}>·</Text>
+                  <Text style={styles.reviewMetaText}>
+                    {review.value === "Alright" ? "Perfectly Priced" : review.value}
+                  </Text>
+                </View>
+              </View>
+            );
+          })
+        )}
+
         <TouchableOpacity style={styles.logoutBtn} onPress={logout}>
           <Text style={styles.logoutText}>Log out</Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -218,7 +305,8 @@ function Row({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
-  container: { flex: 1, paddingHorizontal: 24, paddingTop: 18 },
+  scroll: { flex: 1 },
+  container: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 40 },
 
   title: { fontSize: 28, fontWeight: "900", color: "#111" },
   subtitle: { marginTop: 6, fontSize: 14, color: "#777" },
@@ -274,8 +362,37 @@ const styles = StyleSheet.create({
   searchEmptyText: { fontSize: 13, color: "#777" },
   searchErrorText: { marginTop: 8, fontSize: 13, color: "#b00020" },
 
+  reviewCard: {
+    backgroundColor: "#fafafa",
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 10,
+  },
+  reviewCardHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginBottom: 8,
+  },
+  reviewFragranceName: { fontSize: 15, fontWeight: "800", color: "#111" },
+  reviewFragranceBrand: { fontSize: 13, color: "#666", marginTop: 2 },
+  reviewRatingBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#111",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  reviewRatingText: { color: "#fff", fontWeight: "800", fontSize: 12.5 },
+  reviewBody: { fontSize: 13.5, color: "#333", lineHeight: 19, marginBottom: 10 },
+  reviewMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 4 },
+  reviewMetaText: { fontSize: 12, color: "#777", fontWeight: "600" },
+  reviewMetaDot: { fontSize: 12, color: "#bbb" },
+
   logoutBtn: {
-    marginTop: 18,
+    marginTop: 24,
     backgroundColor: "#111",
     borderRadius: 14,
     paddingVertical: 14,

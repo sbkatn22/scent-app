@@ -221,6 +221,9 @@ export async function searchFragrances(name?: string, page: number = 1) {
   const qs = params.toString();
   const path = `/api/fragrances/search/${qs ? `?${qs}` : ""}`;
 
-  // Your existing request() works fine for GET too
   return request<FragranceSearchResponse>(path, { method: "GET" });
+}
+
+export async function getFragranceById(id: number): Promise<FragranceApiItem> {
+  return request<FragranceApiItem>(`/api/fragrances/get/?id=${id}`, { method: "GET" });
 }

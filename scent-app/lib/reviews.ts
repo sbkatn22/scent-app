@@ -50,7 +50,11 @@ export async function createReview(payload: CreateReviewPayload): Promise<Review
 }
 
 export async function getReviewsForFragrance(fid: number): Promise<ReviewsListResponse> {
-  // /api/reviews/?fid=123
   const res = await http.get("/api/reviews/", { params: { fid } });
+  return res.data as ReviewsListResponse;
+}
+
+export async function getMyReviews(): Promise<ReviewsListResponse> {
+  const res = await http.get("/api/reviews/by-user/");
   return res.data as ReviewsListResponse;
 }

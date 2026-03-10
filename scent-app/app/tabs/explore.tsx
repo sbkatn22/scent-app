@@ -18,7 +18,7 @@ import {
   View,
 } from "react-native";
 
-import { FragranceDetailModal, FragranceForModal } from "@/components/fragrance-detail-modal";
+import { FragranceForModal } from "@/components/fragrance-detail-modal";
 
 // -------------------------
 // TYPES
@@ -71,7 +71,6 @@ export default function ExploreScreen() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedPerfume, setSelectedPerfume] = useState<Perfume | null>(null);
 
   // -------------------------
   // FETCH PROFILE & COLLECTION
@@ -165,7 +164,12 @@ export default function ExploreScreen() {
       <TouchableOpacity
         style={[styles.collectionCard, today && styles.collectionCardActive]}
         activeOpacity={0.9}
-        onPress={() => setSelectedPerfume(item)}
+        onPress={() =>
+          router.push({
+            pathname: "/tabs/fragrance-details",
+            params: { data: JSON.stringify(item), from: "explore" },
+          })
+        }
       >
         {item.image_url && (
           <Image
@@ -291,11 +295,6 @@ export default function ExploreScreen() {
         )}
       </ScrollView>
 
-      <FragranceDetailModal
-        fragrance={selectedPerfume}
-        visible={!!selectedPerfume}
-        onClose={() => setSelectedPerfume(null)}
-      />
     </SafeAreaView>
   );
 }

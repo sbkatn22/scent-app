@@ -1,6 +1,7 @@
 // app/(tabs)/search.tsx
 
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -14,10 +15,10 @@ import {
   View,
 } from "react-native";
 
-import { FragranceDetailModal } from "@/components/fragrance-detail-modal";
 import { FragranceApiItem, searchFragrances } from "@/lib/api";
 
 export default function SearchScreen() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
 
@@ -28,8 +29,6 @@ export default function SearchScreen() {
   const [loadingInitial, setLoadingInitial] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const [selected, setSelected] = useState<FragranceApiItem | null>(null);
 
   // debounce typing
   useEffect(() => {
@@ -126,7 +125,15 @@ export default function SearchScreen() {
           keyExtractor={(item) => String(item.id)}
           contentContainerStyle={{ paddingBottom: 30 }}
           renderItem={({ item }) => (
-            <TouchableOpacity style={styles.card} onPress={() => setSelected(item)}>
+            <TouchableOpacity
+              style={styles.card}
+              onPress={() =>
+                router.push({
+                  pathname: "/tabs/fragrance-details",
+                  params: { data: JSON.stringify(item) },
+                })
+              }
+            >
               <View style={{ flex: 1 }}>
                 <Text style={styles.name}>{item.fragrance.replaceAll("-", " ")}</Text>
                 <Text style={styles.brand}>{item.brand.replaceAll("-", " ")}</Text>
@@ -166,11 +173,6 @@ export default function SearchScreen() {
         />
       )}
 
-      <FragranceDetailModal
-        fragrance={selected}
-        visible={!!selected}
-        onClose={() => setSelected(null)}
-      />
     </SafeAreaView>
   );
 }
