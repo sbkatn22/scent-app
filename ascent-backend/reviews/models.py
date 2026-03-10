@@ -83,6 +83,7 @@ class Review(models.Model):
     class Meta:
         db_table = "reviews"
         ordering = ["-created_at"]
+        unique_together = [("profile", "perfume")]
 
     def __str__(self):
         return f"{self.profile.username} - {self.perfume.perfume} ({self.rating})"

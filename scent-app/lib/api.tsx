@@ -1,5 +1,5 @@
 // lib/api.ts
-export const API_BASE_URL = "http://10.184.24.77:8000";
+export const API_BASE_URL = "http://10.186.43.252:8000";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   console.log(`${API_BASE_URL}${path}`)

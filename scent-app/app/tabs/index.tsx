@@ -20,7 +20,16 @@ import {
   type UserSummary,
   type FragranceApiItem,
 } from "../../lib/api";
-import { getMyReviews, type Review } from "../../lib/reviews";
+import { getMyReviews, deleteReview, type Review } from "../../lib/reviews";
+
+const OCCASIONS = [
+  { key: "winter", label: "Winter", icon: "snow-outline" },
+  { key: "spring", label: "Spring", icon: "flower-outline" },
+  { key: "summer", label: "Summer", icon: "umbrella-outline" },
+  { key: "autumn", label: "Autumn", icon: "leaf-outline" },
+  { key: "day",    label: "Day",    icon: "sunny-outline" },
+  { key: "night",  label: "Night",  icon: "moon-outline" },
+] as const;
 
 type Profile = {
   id: number;
@@ -47,6 +56,7 @@ export default function ProfileHomeScreen() {
   const [myReviews, setMyReviews] = useState<Review[]>([]);
   const [fragranceNames, setFragranceNames] = useState<Record<number, FragranceApiItem>>({});
   const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [deletingReviewId, setDeletingReviewId] = useState<number | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -146,6 +156,18 @@ export default function ProfileHomeScreen() {
   const logout = async () => {
     await AsyncStorage.multiRemove(["access_token", "refresh_token", "profile"]);
     router.replace("/auth/auth");
+  };
+
+  const handleDeleteReview = async (reviewId: number) => {
+    setDeletingReviewId(reviewId);
+    try {
+      await deleteReview(reviewId);
+      setMyReviews((prev) => prev.filter((r) => r.id !== reviewId));
+    } catch {
+      // silently ignore; review stays in the list
+    } finally {
+      setDeletingReviewId(null);
+    }
   };
 
   return (
@@ -262,13 +284,44 @@ export default function ProfileHomeScreen() {
                       </Text>
                     )}
                   </View>
-                  <View style={styles.reviewRatingBadge}>
-                    <Ionicons name="star" size={12} color="#fff" />
-                    <Text style={styles.reviewRatingText}>{Number(review.rating).toFixed(1)}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <View style={styles.reviewRatingBadge}>
+                      <Ionicons name="star" size={12} color="#fff" />
+                      <Text style={styles.reviewRatingText}>{Number(review.rating).toFixed(1)}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.reviewDeleteBtn}
+                      onPress={() => handleDeleteReview(review.id)}
+                      disabled={deletingReviewId === review.id}
+                    >
+                      {deletingReviewId === review.id ? (
+                        <ActivityIndicator size="small" color="#b00020" />
+                      ) : (
+                        <Ionicons name="trash-outline" size={16} color="#b00020" />
+                      )}
+                    </TouchableOpacity>
                   </View>
                 </View>
 
                 <Text style={styles.reviewBody} numberOfLines={3}>{review.description}</Text>
+
+                <View style={styles.reviewOccasionRow}>
+                  {OCCASIONS.map(({ key, label, icon }) => {
+                    const active = review[key as keyof Review] as boolean;
+                    return (
+                      <View key={key} style={styles.reviewOccasionItem}>
+                        <Ionicons
+                          name={icon as any}
+                          size={16}
+                          color={active ? "#111" : "#ddd"}
+                        />
+                        <Text style={[styles.reviewOccasionLabel, active && styles.reviewOccasionLabelActive]}>
+                          {label}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
 
                 <View style={styles.reviewMeta}>
                   <Text style={styles.reviewMetaText}>{review.gender}</Text>
@@ -376,6 +429,14 @@ const styles = StyleSheet.create({
   },
   reviewFragranceName: { fontSize: 15, fontWeight: "800", color: "#111" },
   reviewFragranceBrand: { fontSize: 13, color: "#666", marginTop: 2 },
+  reviewDeleteBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: "#fde7ea",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   reviewRatingBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -387,6 +448,17 @@ const styles = StyleSheet.create({
   },
   reviewRatingText: { color: "#fff", fontWeight: "800", fontSize: 12.5 },
   reviewBody: { fontSize: 13.5, color: "#333", lineHeight: 19, marginBottom: 10 },
+  reviewOccasionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 10,
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+  reviewOccasionItem: { alignItems: "center", gap: 3 },
+  reviewOccasionLabel: { fontSize: 9, color: "#ddd", fontWeight: "700" },
+  reviewOccasionLabelActive: { color: "#555" },
+
   reviewMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 4 },
   reviewMetaText: { fontSize: 12, color: "#777", fontWeight: "600" },
   reviewMetaDot: { fontSize: 12, color: "#bbb" },

@@ -5,7 +5,7 @@ import json
 from decimal import Decimal, InvalidOperation
 
 from django.http import JsonResponse
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 
 from user.models import Profile
@@ -153,6 +153,12 @@ def review_create(request):
             status=404,
         )
 
+    if Review.objects.filter(profile=profile, perfume=perfume).exists():
+        return JsonResponse(
+            {"error": "You have already reviewed this fragrance"},
+            status=409,
+        )
+
     description = str(body.get("description", "")).strip()
     if not description:
         return JsonResponse(
@@ -246,3 +252,129 @@ def review_create(request):
     )
 
     return JsonResponse(_review_to_dict(review), status=201)
+
+
+@csrf_exempt
+@require_http_methods(["PATCH"])
+def review_update(request, review_id):
+    """
+    Partially update a review. Only the review's author may edit it.
+    All fields are optional — only supplied fields are updated.
+
+    URL param:
+      - review_id (int): ID of the review to update.
+
+    Accepts any subset of:
+      description, rating, gender, longevity, value,
+      winter, spring, summer, autumn, day, night, maceration
+
+    Requires Authorization: Bearer <access_token>.
+    Returns the updated review on success (200).
+    """
+    uid_raw, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(uid_raw)
+    if err:
+        return err
+
+    try:
+        review = Review.objects.select_related("profile", "perfume").get(id=review_id)
+    except Review.DoesNotExist:
+        return JsonResponse({"error": "Review not found"}, status=404)
+
+    if review.profile.supabase_uid != profile.supabase_uid:
+        return JsonResponse({"error": "You can only edit your own reviews"}, status=403)
+
+    try:
+        body = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    if "description" in body:
+        description = str(body["description"]).strip()
+        if not description:
+            return JsonResponse({"error": "Description cannot be empty"}, status=400)
+        if len(description) > 500:
+            return JsonResponse({"error": "Description exceeds 500 characters"}, status=400)
+        review.description = description
+
+    if "rating" in body:
+        try:
+            from decimal import Decimal, InvalidOperation
+            rating_val = Decimal(str(body["rating"]))
+        except (InvalidOperation, TypeError, ValueError):
+            return JsonResponse({"error": "Invalid rating value"}, status=400)
+        if rating_val < Decimal("0.0") or rating_val > Decimal("10.0"):
+            return JsonResponse({"error": "Rating must be between 0.0 and 10.0"}, status=400)
+        review.rating = rating_val.quantize(Decimal("0.1"))
+
+    if "gender" in body:
+        gender = str(body["gender"]).strip()
+        if gender not in Review.Gender.values:
+            return JsonResponse({"error": "Invalid gender value", "allowed": list(Review.Gender.values)}, status=400)
+        review.gender = gender
+
+    if "longevity" in body:
+        longevity = str(body["longevity"]).strip()
+        if longevity not in Review.Longevity.values:
+            return JsonResponse({"error": "Invalid longevity value", "allowed": list(Review.Longevity.values)}, status=400)
+        review.longevity = longevity
+
+    if "value" in body:
+        value = str(body["value"]).strip()
+        if value not in Review.Value.values:
+            return JsonResponse({"error": "Invalid value rating", "allowed": list(Review.Value.values)}, status=400)
+        review.value = value
+
+    for flag in ("winter", "spring", "summer", "autumn", "day", "night"):
+        if flag in body:
+            val = body[flag]
+            review.__setattr__(flag, bool(val) if isinstance(val, bool) else False)
+
+    if "maceration" in body:
+        maceration = body["maceration"]
+        if maceration is not None:
+            try:
+                maceration = int(maceration)
+                if maceration < 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                return JsonResponse({"error": "Maceration must be a non-negative integer if provided"}, status=400)
+        review.maceration = maceration
+
+    review.save()
+    return JsonResponse(_review_to_dict(review), status=200)
+
+
+@csrf_exempt
+@require_http_methods(["DELETE"])
+def review_delete(request, review_id):
+    """
+    Delete a review by ID. Only the review's author may delete it.
+
+    URL param:
+      - review_id (int): ID of the review to delete.
+
+    Requires Authorization: Bearer <access_token>.
+    Returns 204 on success.
+    """
+    uid_raw, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(uid_raw)
+    if err:
+        return err
+
+    try:
+        review = Review.objects.select_related("profile").get(id=review_id)
+    except Review.DoesNotExist:
+        return JsonResponse({"error": "Review not found"}, status=404)
+
+    if review.profile.supabase_uid != profile.supabase_uid:
+        return JsonResponse({"error": "You can only delete your own reviews"}, status=403)
+
+    review.delete()
+    return JsonResponse({}, status=204)

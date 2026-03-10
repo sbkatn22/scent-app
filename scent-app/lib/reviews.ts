@@ -39,9 +39,12 @@ export type CreateReviewPayload = {
   gender: Review["gender"];
   longevity: Review["longevity"];
   value: Review["value"];
-  // optional fields later if you want:
-  // winter?: boolean; spring?: boolean; summer?: boolean; autumn?: boolean;
-  // day?: boolean; night?: boolean; maceration?: number;
+  winter?: boolean;
+  spring?: boolean;
+  summer?: boolean;
+  autumn?: boolean;
+  day?: boolean;
+  night?: boolean;
 };
 
 export async function createReview(payload: CreateReviewPayload): Promise<Review> {
@@ -57,4 +60,15 @@ export async function getReviewsForFragrance(fid: number): Promise<ReviewsListRe
 export async function getMyReviews(): Promise<ReviewsListResponse> {
   const res = await http.get("/api/reviews/by-user/");
   return res.data as ReviewsListResponse;
+}
+
+export type UpdateReviewPayload = Partial<Omit<CreateReviewPayload, "fid">>;
+
+export async function updateReview(reviewId: number, payload: UpdateReviewPayload): Promise<Review> {
+  const res = await http.patch(`/api/reviews/update/${reviewId}/`, payload);
+  return res.data as Review;
+}
+
+export async function deleteReview(reviewId: number): Promise<void> {
+  await http.delete(`/api/reviews/delete/${reviewId}/`);
 }

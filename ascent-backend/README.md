@@ -22,6 +22,8 @@ Django backend for the scent app. Uses Supabase for auth. Login returns Supabase
 - [Reviews API](#reviews-api-apireviews)
   - [Review model](#review-model)
   - [Create review (POST)](#create-review-post)
+  - [Update review (PATCH)](#update-review-patch)
+  - [Delete review (DELETE)](#delete-review-delete)
   - [List reviews for a fragrance (GET)](#list-reviews-for-a-fragrance-get)
   - [List reviews for current user (GET)](#list-reviews-for-current-user-get)
 - [User API](#user-api-apiuser)
@@ -586,6 +588,121 @@ Returns the created review in the shape below.
 { "error": "Perfume not found for given fid" }
 ```
 
+**409** — User has already reviewed this fragrance:
+
+```json
+{ "error": "You have already reviewed this fragrance" }
+```
+
+---
+
+### Update review (PATCH)
+
+Partially updates an existing review. Only the review's author may edit it. All fields are optional — only the fields present in the request body are changed.
+
+| Method | Path | Headers | Body | Success | Error |
+|--------|------|---------|------|---------|-------|
+| PATCH | `/api/reviews/update/<review_id>/` | `Authorization: Bearer <access_token>` | JSON (see below) | `200` — updated review object | `400` validation error; `401` invalid token; `403` not the author; `404` review not found |
+
+#### URL parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `review_id` | integer | ID of the review to update. |
+
+#### Request body (all fields optional)
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `description` | string | 1–500 characters. |
+| `rating` | number | 0.0–10.0; stored with one decimal place. |
+| `gender` | string | One of: `"Female"`, `"Slightly Female"`, `"Unisex"`, `"Slightly Male"`, `"Male"`. |
+| `longevity` | string | One of: `"0 - 2 hours"`, `"2 - 4 hours"`, `"4 - 6 hours"`, `"6 - 8 hours"`, `"8-10 hours"`, `"10+ hours"`. |
+| `value` | string | One of: `"Super Overpriced"`, `"Overpriced"`, `"Alright"`, `"Good Value"`, `"Super Value"`. |
+| `winter` | boolean | Good in winter. |
+| `spring` | boolean | Good in spring. |
+| `summer` | boolean | Good in summer. |
+| `autumn` | boolean | Good in autumn. |
+| `day` | boolean | Good for day wear. |
+| `night` | boolean | Good for night wear. |
+| `maceration` | integer or null | Non-negative days; set to `null` to clear. |
+
+#### Example request
+
+```http
+PATCH /api/reviews/update/42/
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "description": "Updated review text.",
+  "rating": 9.0,
+  "winter": true,
+  "night": true
+}
+```
+
+#### Success response (200)
+
+Returns the full updated review object in the same shape as the create response.
+
+#### Error responses
+
+**400** — Validation error (same messages as Create review).
+
+**403** — Not the author:
+
+```json
+{ "error": "You can only edit your own reviews" }
+```
+
+**404** — Review not found:
+
+```json
+{ "error": "Review not found" }
+```
+
+---
+
+### Delete review (DELETE)
+
+Permanently deletes a review. Only the review's author may delete it.
+
+| Method | Path | Headers | Success | Error |
+|--------|------|---------|---------|-------|
+| DELETE | `/api/reviews/delete/<review_id>/` | `Authorization: Bearer <access_token>` | `204` — empty body | `401` invalid token; `403` not the author; `404` review not found |
+
+#### URL parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `review_id` | integer | ID of the review to delete. |
+
+#### Example request
+
+```http
+DELETE /api/reviews/delete/42/
+Authorization: Bearer <access_token>
+```
+
+#### Success response (204)
+
+Empty response body.
+
+#### Error responses
+
+**403** — Not the author:
+
+```json
+{ "error": "You can only delete your own reviews" }
+```
+
+**404** — Review not found:
+
+```json
+{ "error": "Review not found" }
+```
+
 ---
 
 ### List reviews for a fragrance (GET)
@@ -994,8 +1111,10 @@ Returns the list of profiles that follow the authenticated user. Requires `Autho
 
 - **400 Bad Request** — Missing or invalid JSON; missing required fields; blank `username`; username already exists; review validation (rating range, description length, invalid gender/longevity/value choices); cannot follow self.
 - **401 Unauthorized** — Missing, invalid, or expired Bearer token; invalid refresh token; invalid credentials.
-- **404 Not Found** — No profile for the authenticated user; profile not found for follow `uid`; perfume not found for review `fid` or collection.
+- **403 Forbidden** — Authenticated user is not the author of the review they are trying to update or delete.
+- **404 Not Found** — No profile for the authenticated user; profile not found for follow `uid`; perfume not found for review `fid` or collection; review not found by `review_id`.
 - **405 Method Not Allowed** — Invalid HTTP method (e.g. DELETE on `/me`).
+- **409 Conflict** — User has already submitted a review for the given fragrance (one review per user per fragrance is enforced).
 - **500 Server Error** — Unexpected Supabase response; Redis failure; invalid user id returned.
 
 All error responses use the shape:

@@ -2,6 +2,7 @@
 
 import { Ionicons } from "@expo/vector-icons";
 import { Picker } from "@react-native-picker/picker";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -20,7 +21,7 @@ import {
 
 import { useCollection } from "@/contexts/collection-context";
 import type { FragranceApiItem } from "@/lib/api";
-import { createReview, getReviewsForFragrance, Review } from "@/lib/reviews";
+import { createReview, updateReview, getReviewsForFragrance, Review } from "@/lib/reviews";
 
 type FragranceItem = FragranceApiItem & { size?: string };
 
@@ -29,6 +30,15 @@ const PERFUME_SIZES = [
   { value: "DECANT", label: "Decant" },
   { value: "MINI", label: "Mini" },
   { value: "BOTTLE", label: "Bottle" },
+] as const;
+
+const OCCASIONS = [
+  { key: "winter", label: "Winter", icon: "snow-outline" },
+  { key: "spring", label: "Spring", icon: "flower-outline" },
+  { key: "summer", label: "Summer", icon: "umbrella-outline" },
+  { key: "autumn", label: "Autumn", icon: "leaf-outline" },
+  { key: "day",    label: "Day",    icon: "sunny-outline" },
+  { key: "night",  label: "Night",  icon: "moon-outline" },
 ] as const;
 
 function prettyList(arr?: string[]) {
@@ -65,14 +75,27 @@ export default function FragranceDetailsScreen() {
   const [reviewsCount, setReviewsCount] = useState(0);
   const [reviewsLoading, setReviewsLoading] = useState(false);
   const [reviewsError, setReviewsError] = useState<string | null>(null);
+  const [myUid, setMyUid] = useState<string | null>(null);
+
+  const userHasReviewed = useMemo(
+    () => !!myUid && reviews.some((r) => r.uid === myUid),
+    [reviews, myUid]
+  );
 
   const fetchReviews = async (fid: number) => {
     setReviewsError(null);
     setReviewsLoading(true);
     try {
-      const res = await getReviewsForFragrance(fid);
+      const [res, profileRaw] = await Promise.all([
+        getReviewsForFragrance(fid),
+        AsyncStorage.getItem("profile"),
+      ]);
       setReviews(res.results ?? []);
       setReviewsCount(res.count ?? 0);
+      if (profileRaw) {
+        const profile = JSON.parse(profileRaw);
+        setMyUid(profile?.supabase_uid ?? null);
+      }
     } catch (e: any) {
       setReviews([]);
       setReviewsCount(0);
@@ -89,6 +112,7 @@ export default function FragranceDetailsScreen() {
 
   // ===== Write Review =====
   const [writeReviewOpen, setWriteReviewOpen] = useState(false);
+  const [editingReviewId, setEditingReviewId] = useState<number | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewDescription, setReviewDescription] = useState("");
@@ -102,14 +126,46 @@ export default function FragranceDetailsScreen() {
   const [reviewValue, setReviewValue] = useState<
     "Super Overpriced" | "Overpriced" | "Alright" | "Good Value" | "Super Value"
   >("Alright");
+  const [reviewOccasion, setReviewOccasion] = useState({
+    winter: false,
+    spring: false,
+    summer: false,
+    autumn: false,
+    day: false,
+    night: false,
+  });
+
+  const toggleOccasion = (key: keyof typeof reviewOccasion) =>
+    setReviewOccasion((prev) => ({ ...prev, [key]: !prev[key] }));
 
   function resetReviewForm() {
+    setEditingReviewId(null);
     setReviewDescription("");
     setReviewRating("");
     setReviewGender("Unisex");
     setReviewLongevity("6 - 8 hours");
     setReviewValue("Alright");
+    setReviewOccasion({ winter: false, spring: false, summer: false, autumn: false, day: false, night: false });
     setReviewError(null);
+  }
+
+  function openEditReview(review: Review) {
+    setEditingReviewId(review.id);
+    setReviewDescription(review.description);
+    setReviewRating(String(review.rating));
+    setReviewGender(review.gender);
+    setReviewLongevity(review.longevity);
+    setReviewValue(review.value);
+    setReviewOccasion({
+      winter: review.winter,
+      spring: review.spring,
+      summer: review.summer,
+      autumn: review.autumn,
+      day: review.day,
+      night: review.night,
+    });
+    setReviewError(null);
+    setWriteReviewOpen(true);
   }
 
   const submitReview = async () => {
@@ -133,19 +189,33 @@ export default function FragranceDetailsScreen() {
 
     setReviewLoading(true);
     try {
-      await createReview({
-        fid: fragrance.id,
+      const payload = {
         description: reviewDescription.trim(),
         rating: Number(ratingNum.toFixed(1)),
         gender: reviewGender,
         longevity: reviewLongevity,
         value: reviewValue,
-      });
+        ...reviewOccasion,
+      };
+
+      if (editingReviewId !== null) {
+        await updateReview(editingReviewId, payload);
+      } else {
+        await createReview({ fid: fragrance.id, ...payload });
+      }
+
       setWriteReviewOpen(false);
       resetReviewForm();
       await fetchReviews(fragrance.id);
     } catch (e: any) {
-      setReviewError(e?.message ?? "Failed to submit review.");
+      const msg = e?.response?.data?.error ?? e?.message ?? "Failed to submit review.";
+      if (e?.response?.status === 409) {
+        setWriteReviewOpen(false);
+        resetReviewForm();
+        await fetchReviews(fragrance.id);
+      } else {
+        setReviewError(msg);
+      }
     } finally {
       setReviewLoading(false);
     }
@@ -350,16 +420,29 @@ export default function FragranceDetailsScreen() {
         {/* Reviews Header */}
         <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Reviews</Text>
 
-        <TouchableOpacity
-          style={styles.createReviewBtn}
-          onPress={() => {
-            resetReviewForm();
-            setWriteReviewOpen(true);
-          }}
-        >
-          <Ionicons name="create-outline" size={16} color="#fff" />
-          <Text style={styles.createReviewBtnText}>Create a Review</Text>
-        </TouchableOpacity>
+        {userHasReviewed ? (
+          <TouchableOpacity
+            style={[styles.createReviewBtn, styles.editReviewBtn]}
+            onPress={() => {
+              const myReview = reviews.find((r) => r.uid === myUid);
+              if (myReview) openEditReview(myReview);
+            }}
+          >
+            <Ionicons name="pencil-outline" size={16} color="#111" />
+            <Text style={[styles.createReviewBtnText, styles.editReviewBtnText]}>Edit Your Review</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.createReviewBtn}
+            onPress={() => {
+              resetReviewForm();
+              setWriteReviewOpen(true);
+            }}
+          >
+            <Ionicons name="create-outline" size={16} color="#fff" />
+            <Text style={styles.createReviewBtnText}>Create a Review</Text>
+          </TouchableOpacity>
+        )}
 
         {/* Write Review inline form */}
         {writeReviewOpen && (
@@ -394,6 +477,29 @@ export default function FragranceDetailsScreen() {
                   <Text style={[styles.chipText, reviewGender === g && styles.chipTextActive]}>{g}</Text>
                 </TouchableOpacity>
               ))}
+            </View>
+
+            <Text style={[styles.infoLabel, { marginTop: 10 }]}>Occasion</Text>
+            <View style={styles.occasionRow}>
+              {OCCASIONS.map(({ key, label, icon }) => {
+                const active = reviewOccasion[key];
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    style={styles.occasionItem}
+                    onPress={() => toggleOccasion(key)}
+                  >
+                    <Ionicons
+                      name={icon as any}
+                      size={22}
+                      color={active ? "#111" : "#ccc"}
+                    />
+                    <Text style={[styles.occasionLabel, active && styles.occasionLabelActive]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
 
             <Text style={[styles.infoLabel, { marginTop: 10 }]}>Longevity</Text>
@@ -443,7 +549,9 @@ export default function FragranceDetailsScreen() {
                 {reviewLoading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.actionButtonText}>Submit</Text>
+                  <Text style={styles.actionButtonText}>
+                    {editingReviewId !== null ? "Save Changes" : "Submit"}
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -474,25 +582,44 @@ export default function FragranceDetailsScreen() {
               Showing {reviews.length} of {reviewsCount}
             </Text>
             {reviews.map((r) => (
-              <View key={String(r.id)} style={styles.reviewCard}>
-                <View style={styles.reviewTopRow}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <View style={styles.reviewAvatar}>
-                      <Text style={styles.reviewAvatarText}>{r.gender?.[0] ?? "U"}</Text>
-                    </View>
-                    <View>
-                      <Text style={styles.reviewMetaText}>
-                        {r.gender} • {r.longevity} • {r.value}
-                      </Text>
-                      <Text style={styles.reviewDateText}>{formatDate(r.created_at)}</Text>
-                    </View>
-                  </View>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <Ionicons name="star" size={14} color="#111" />
+              <View key={String(r.id)} style={[styles.reviewCard, r.uid === myUid && styles.reviewCardOwn]}>
+                <View style={styles.reviewCardHeader}>
+                  <Text style={styles.reviewDateText}>{formatDate(r.created_at)}</Text>
+                  <View style={styles.reviewRatingBadge}>
+                    <Ionicons name="star" size={12} color="#fff" />
                     <Text style={styles.reviewRatingText}>{Number(r.rating).toFixed(1)}</Text>
                   </View>
                 </View>
-                <Text style={styles.reviewBodyText}>{r.description}</Text>
+
+                <Text style={styles.reviewBody} numberOfLines={3}>{r.description}</Text>
+
+                <View style={styles.reviewOccasionRow}>
+                  {OCCASIONS.map(({ key, label, icon }) => {
+                    const active = r[key as keyof typeof r] as boolean;
+                    return (
+                      <View key={key} style={styles.reviewOccasionItem}>
+                        <Ionicons
+                          name={icon as any}
+                          size={16}
+                          color={active ? "#111" : "#ddd"}
+                        />
+                        <Text style={[styles.reviewOccasionLabel, active && styles.reviewOccasionLabelActive]}>
+                          {label}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+
+                <View style={styles.reviewMeta}>
+                  <Text style={styles.reviewMetaText}>{r.gender}</Text>
+                  <Text style={styles.reviewMetaDot}>·</Text>
+                  <Text style={styles.reviewMetaText}>{r.longevity}</Text>
+                  <Text style={styles.reviewMetaDot}>·</Text>
+                  <Text style={styles.reviewMetaText}>
+                    {r.value === "Alright" ? "Perfectly Priced" : r.value}
+                  </Text>
+                </View>
               </View>
             ))}
           </>
@@ -613,6 +740,13 @@ const styles = StyleSheet.create({
   infoLabel: { fontSize: 12, color: "#666", fontWeight: "800", marginBottom: 6 },
   infoValue: { color: "#111", fontWeight: "700", lineHeight: 18 },
 
+  editReviewBtn: {
+    backgroundColor: "#f2f2f2",
+  },
+  editReviewBtnText: {
+    color: "#111",
+  },
+
   createReviewBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -641,6 +775,21 @@ const styles = StyleSheet.create({
     color: "#111",
   },
 
+  occasionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 4,
+    marginBottom: 2,
+  },
+  occasionItem: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 6,
+  },
+  occasionLabel: { fontSize: 10, color: "#ccc", fontWeight: "700" },
+  occasionLabelActive: { color: "#111" },
+
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
   chip: { backgroundColor: "#f2f2f2", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999 },
   chipActive: { backgroundColor: "#111" },
@@ -652,27 +801,48 @@ const styles = StyleSheet.create({
   emptyReviewsSubtitle: { fontSize: 13, color: "#666", marginTop: 6 },
 
   reviewsCountText: { color: "#777", marginBottom: 8, fontWeight: "700" },
-  reviewCard: { backgroundColor: "#fafafa", borderRadius: 14, padding: 14, marginBottom: 10 },
-  reviewTopRow: {
+  reviewCard: {
+    backgroundColor: "#fafafa",
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+  },
+  reviewCardOwn: {
+    borderWidth: 1.5,
+    borderColor: "#111",
+  },
+  reviewCardHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
-    marginBottom: 10,
+    marginBottom: 8,
   },
-  reviewAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 999,
-    backgroundColor: "#111",
+  reviewDateText: { fontSize: 12, color: "#777", fontWeight: "600" },
+  reviewRatingBadge: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 4,
+    backgroundColor: "#111",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
-  reviewAvatarText: { color: "#fff", fontWeight: "900", fontSize: 12 },
-  reviewMetaText: { color: "#111", fontWeight: "900", fontSize: 12.5 },
-  reviewDateText: { color: "#777", fontSize: 12, marginTop: 2 },
-  reviewRatingText: { color: "#111", fontWeight: "900" },
-  reviewBodyText: { color: "#111", fontWeight: "700", lineHeight: 18 },
+  reviewRatingText: { color: "#fff", fontWeight: "800", fontSize: 12.5 },
+  reviewBody: { fontSize: 13.5, color: "#333", lineHeight: 19, marginBottom: 10 },
+  reviewOccasionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 10,
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+  reviewOccasionItem: { alignItems: "center", gap: 3 },
+  reviewOccasionLabel: { fontSize: 9, color: "#ddd", fontWeight: "700" },
+  reviewOccasionLabelActive: { color: "#555" },
+  reviewMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 4 },
+  reviewMetaText: { fontSize: 12, color: "#777", fontWeight: "600" },
+  reviewMetaDot: { fontSize: 12, color: "#bbb" },
 
   errorBox: {
     backgroundColor: "#fde7ea",
