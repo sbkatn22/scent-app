@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
@@ -12,6 +13,9 @@ import {
 } from "react-native";
 import {
   getPublicProfileByUsername,
+  getFollowing,
+  getMe,
+  toggleFollow,
   type Profile,
   type FragranceApiItem,
   type CollectionItem,
@@ -25,6 +29,9 @@ export default function OtherUserProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dailyScent, setDailyScent] = useState<FragranceApiItem | null>(null);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [isOwnProfile, setIsOwnProfile] = useState(false);
+  const [followLoading, setFollowLoading] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -44,6 +51,16 @@ export default function OtherUserProfileScreen() {
         const data = await getPublicProfileByUsername(username, token);
         setProfile(data.profile);
         setDailyScent(data.daily_scent);
+
+        const [meRes, followingRes] = await Promise.all([
+          getMe(token),
+          getFollowing(token),
+        ]);
+        const profileUid = data.profile.supabase_uid;
+        setIsOwnProfile(meRes.profile.supabase_uid === profileUid);
+        setIsFollowing(
+          followingRes.following.some((f) => f.uid === profileUid)
+        );
       } catch (e) {
         setError("Could not load profile.");
       } finally {
@@ -53,6 +70,23 @@ export default function OtherUserProfileScreen() {
 
     load();
   }, [username]);
+
+  const handleFollowPress = async () => {
+    if (!profile || followLoading) return;
+    const token = await AsyncStorage.getItem("access_token");
+    if (!token) return;
+    try {
+      setFollowLoading(true);
+      const res = await toggleFollow(profile.supabase_uid, token);
+      setIsFollowing(
+        res.following.some((f) => f.uid === profile.supabase_uid)
+      );
+    } catch (_e) {
+      // Error already logged in request(); optionally show toast
+    } finally {
+      setFollowLoading(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -80,10 +114,43 @@ export default function OtherUserProfileScreen() {
         ) : (
           <ScrollView contentContainerStyle={styles.scrollContent}>
             <View style={styles.card}>
-              <Row label="Username" value={profile.username} />
-              <Row label="Profile ID" value={String(profile.id)} />
-              <Row label="Supabase UID" value={profile.supabase_uid} />
-              {profile.bio ? <Row label="Bio" value={profile.bio} /> : null}
+              <View style={styles.profileHeader}>
+                <View>
+                  <Row label="Username" value={profile.username} />
+                  <Row label="Profile ID" value={String(profile.id)} />
+                  <Row label="Supabase UID" value={profile.supabase_uid} />
+                  {profile.bio ? <Row label="Bio" value={profile.bio} /> : null}
+                </View>
+                {!isOwnProfile && (
+                  <TouchableOpacity
+                    onPress={handleFollowPress}
+                    disabled={followLoading}
+                    style={[
+                      styles.followButton,
+                      isFollowing ? styles.followingButton : styles.followButtonSolid,
+                    ]}
+                  >
+                    {followLoading ? (
+                      <ActivityIndicator
+                        size="small"
+                        color={isFollowing ? "#333" : "#fff"}
+                      />
+                    ) : isFollowing ? (
+                      <>
+                        <Ionicons
+                          name="checkmark"
+                          size={16}
+                          color="#333"
+                          style={styles.followIcon}
+                        />
+                        <Text style={styles.followingButtonText}>Following</Text>
+                      </>
+                    ) : (
+                      <Text style={styles.followButtonText}>Follow</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
 
             <View style={styles.card}>
@@ -155,6 +222,40 @@ const styles = StyleSheet.create({
     padding: 14,
   },
 
+  profileHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  followButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    minWidth: 100,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+  },
+  followButtonSolid: {
+    backgroundColor: "#111",
+  },
+  followingButton: {
+    backgroundColor: "#e8e8e8",
+  },
+  followButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  followingButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#333",
+  },
+  followIcon: {
+    marginRight: 4,
+  },
   row: { marginBottom: 12 },
   rowLabel: { fontSize: 12.5, fontWeight: "800", color: "#111" },
   rowValue: { marginTop: 4, fontSize: 14, color: "#444" },

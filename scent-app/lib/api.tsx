@@ -141,6 +141,68 @@ export async function getPublicProfileByUsername(
   });
 }
 
+// ===== Current user (me) =====
+
+export async function getMe(accessToken: string): Promise<{ profile: Profile }> {
+  return request<{ profile: Profile }>("/api/user/me", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+}
+
+// ===== Follow =====
+
+export type FollowingItem = {
+  uid: string;
+  username: string;
+  profile_picture: string | null;
+};
+
+export type FollowingResponse = {
+  following: FollowingItem[];
+};
+
+export async function getFollowing(
+  accessToken: string
+): Promise<FollowingResponse> {
+  return request<FollowingResponse>("/api/user/following", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+}
+
+export type FollowersResponse = {
+  followers: FollowingItem[];
+};
+
+export async function getFollowers(
+  accessToken: string
+): Promise<FollowersResponse> {
+  return request<FollowersResponse>("/api/user/followers", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+}
+
+export async function toggleFollow(
+  uid: string,
+  accessToken: string
+): Promise<FollowingResponse> {
+  const path = `/api/user/follow?${new URLSearchParams({ uid }).toString()}`;
+  return request<FollowingResponse>(path, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+}
+
 // ===== Fragrance Search (GET) =====
 
 export type FragranceSearchResponse = {
