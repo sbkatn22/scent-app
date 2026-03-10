@@ -126,7 +126,7 @@ export default function AuthScreen() {
         // router.replace("/auth/auth");
       }
 
-      router.replace("/(tabs)");
+      router.replace("/tabs");
     }
   } catch (e: any) {
     console.log("🔴 AUTH ERROR:", e);

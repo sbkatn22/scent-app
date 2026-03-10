@@ -217,7 +217,10 @@ def toggle_follow(request):
         profile.following.add(foreign_profile)
     profile.save()
     following = _summarized_profiles_from_queryset(profile.following.all())
-    return JsonResponse({"following": following}, status=200)
+    return JsonResponse({
+        "following": following,
+        "target_followers_count": foreign_profile.followers.count(),
+    }, status=200)
 
 
 @csrf_exempt

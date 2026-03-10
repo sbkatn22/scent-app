@@ -1,5 +1,5 @@
 // lib/api.ts
-export const API_BASE_URL = "http://192.168.68.110:8000";
+export const API_BASE_URL = "http://10.184.24.77:8000";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   console.log(`${API_BASE_URL}${path}`)
@@ -29,6 +29,8 @@ export type Profile = {
   profile_picture: string | null;
   created_at: string;
   updated_at: string;
+  followers_count?: number;
+  following_count?: number;
   // For some endpoints (e.g. login) this may be omitted.
   // For public profile, the backend returns a full collection array.
   collection?: CollectionItem[];
@@ -162,6 +164,7 @@ export type FollowingItem = {
 
 export type FollowingResponse = {
   following: FollowingItem[];
+  target_followers_count?: number;
 };
 
 export async function getFollowing(

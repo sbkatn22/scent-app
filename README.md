@@ -15,6 +15,10 @@
    # source venv/bin/activate
    ```
 
+   Virtual Environment Start Command:
+
+   source c:/Users/sanka/Scent_App/.venv/Scripts/activate
+
 2. Install dependencies:
 
    ```bash

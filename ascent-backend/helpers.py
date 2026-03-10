@@ -81,6 +81,8 @@ def _profile_to_dict(profile):
         "profile_picture": profile.profile_picture or "",
         "created_at": profile.created_at.isoformat(),
         "updated_at": profile.updated_at.isoformat(),
+        "followers_count": profile.followers.count(),
+        "following_count": profile.following.count(),
         "collection": [
             {
                 **_fragrance_to_dict(perfume_collected.perfume),

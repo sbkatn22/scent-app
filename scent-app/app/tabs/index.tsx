@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { useRouter, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   SafeAreaView,
@@ -54,24 +54,26 @@ export default function ProfileHomeScreen() {
     load();
   }, []);
 
-  useEffect(() => {
-    const loadCounts = async () => {
-      const token = await AsyncStorage.getItem("access_token");
-      if (!token) return;
-      try {
-        const [followingRes, followersRes] = await Promise.all([
-          getFollowing(token),
-          getFollowers(token),
-        ]);
-        setFollowingCount(followingRes.following.length);
-        setFollowersCount(followersRes.followers.length);
-      } catch {
-        // ignore; counts stay 0
-      }
-    };
+  useFocusEffect(
+    useCallback(() => {
+      const loadCounts = async () => {
+        const token = await AsyncStorage.getItem("access_token");
+        if (!token) return;
+        try {
+          const [followingRes, followersRes] = await Promise.all([
+            getFollowing(token),
+            getFollowers(token),
+          ]);
+          setFollowingCount(followingRes.following.length);
+          setFollowersCount(followersRes.followers.length);
+        } catch {
+          // ignore; counts stay 0
+        }
+      };
 
-    loadCounts();
-  }, []);
+      loadCounts();
+    }, [])
+  );
 
   useEffect(() => {
     const runSearch = async () => {

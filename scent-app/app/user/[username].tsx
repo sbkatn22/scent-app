@@ -32,6 +32,8 @@ export default function OtherUserProfileScreen() {
   const [isFollowing, setIsFollowing] = useState(false);
   const [isOwnProfile, setIsOwnProfile] = useState(false);
   const [followLoading, setFollowLoading] = useState(false);
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
 
   useEffect(() => {
     const load = async () => {
@@ -51,6 +53,8 @@ export default function OtherUserProfileScreen() {
         const data = await getPublicProfileByUsername(username, token);
         setProfile(data.profile);
         setDailyScent(data.daily_scent);
+        setFollowerCount(data.profile.followers_count ?? 0);
+        setFollowingCount(data.profile.following_count ?? 0);
 
         const [meRes, followingRes] = await Promise.all([
           getMe(token),
@@ -78,9 +82,13 @@ export default function OtherUserProfileScreen() {
     try {
       setFollowLoading(true);
       const res = await toggleFollow(profile.supabase_uid, token);
-      setIsFollowing(
-        res.following.some((f) => f.uid === profile.supabase_uid)
-      );
+      const nowFollowing = res.following.some((f) => f.uid === profile.supabase_uid);
+      setIsFollowing(nowFollowing);
+      if (res.target_followers_count !== undefined) {
+        setFollowerCount(res.target_followers_count);
+      } else {
+        setFollowerCount((prev) => nowFollowing ? prev + 1 : Math.max(0, prev - 1));
+      }
     } catch (_e) {
       // Error already logged in request(); optionally show toast
     } finally {
@@ -115,11 +123,21 @@ export default function OtherUserProfileScreen() {
           <ScrollView contentContainerStyle={styles.scrollContent}>
             <View style={styles.card}>
               <View style={styles.profileHeader}>
-                <View>
+                <View style={styles.profileInfo}>
                   <Row label="Username" value={profile.username} />
                   <Row label="Profile ID" value={String(profile.id)} />
                   <Row label="Supabase UID" value={profile.supabase_uid} />
                   {profile.bio ? <Row label="Bio" value={profile.bio} /> : null}
+                  <View style={styles.countsRow}>
+                    <View style={styles.countBlock}>
+                      <Text style={styles.countNumber}>{followerCount}</Text>
+                      <Text style={styles.countLabel}>Followers</Text>
+                    </View>
+                    <View style={styles.countBlock}>
+                      <Text style={styles.countNumber}>{followingCount}</Text>
+                      <Text style={styles.countLabel}>Following</Text>
+                    </View>
+                  </View>
                 </View>
                 {!isOwnProfile && (
                   <TouchableOpacity
@@ -228,6 +246,10 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     gap: 12,
   },
+  profileInfo: {
+    flex: 1,
+    flexShrink: 1,
+  },
   followButton: {
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -256,6 +278,18 @@ const styles = StyleSheet.create({
   followIcon: {
     marginRight: 4,
   },
+  countsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  countBlock: {
+    alignItems: "center",
+    minWidth: 60,
+  },
+  countNumber: { fontSize: 17, fontWeight: "900", color: "#111" },
+  countLabel: { fontSize: 12, color: "#555", marginTop: 1 },
   row: { marginBottom: 12 },
   rowLabel: { fontSize: 12.5, fontWeight: "800", color: "#111" },
   rowValue: { marginTop: 4, fontSize: 14, color: "#444" },

@@ -17,13 +17,13 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
       <CollectionProvider>
-      {/* ✅ Hide headers globally (prevents "auth/auth" and "(tabs)" back label) */}
+      {/* ✅ Hide headers globally (prevents "auth/auth" and "tabs" back label) */}
       <Stack screenOptions={{ headerShown: false }}>
         {/* Auth */}
         <Stack.Screen name="auth/auth" options={{ headerShown: false }} />
 
         {/* Tabs */}
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="tabs" options={{ headerShown: false }} />
 
         {/* Modal (optional header can be on if you want) */}
         <Stack.Screen
