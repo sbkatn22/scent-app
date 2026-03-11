@@ -253,7 +253,7 @@ export default function ExploreScreen() {
           keyExtractor={(item) => item.id.toString()}
           contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 18 }}
           renderItem={renderPerfumeCard}
-          ListEmptyComponent={renderAddCard(() => router.push("/search"))}
+          ListEmptyComponent={renderAddCard(() => router.push("/tabs/search"))}
         />
 
         {/* Collection */}
@@ -268,7 +268,7 @@ export default function ExploreScreen() {
           contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 18 }}
           renderItem={({ item }) =>
             item.id === -1
-              ? renderAddCard(() => router.push("/search"))
+              ? renderAddCard(() => router.push("/tabs/search"))
               : renderPerfumeCard({ item })
           }
         />
