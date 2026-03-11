@@ -122,6 +122,82 @@ def _get_uid_from_bearer(request):
         return None, JsonResponse({"error": "Invalid or expired token."}, status=401)
 
 
+def _get_profile_optional(request):
+    """Returns the Profile if a valid Bearer token is present, else None."""
+    auth = request.META.get("HTTP_AUTHORIZATION", "")
+    if not auth.startswith("Bearer "):
+        return None
+    token = auth[7:].strip()
+    if not token:
+        return None
+    try:
+        from user.supabase_client import get_supabase_admin
+        import uuid
+        admin = get_supabase_admin()
+        user_resp = admin.auth.get_user(token)
+        user_dict = user_resp.user.dict() if hasattr(user_resp.user, "dict") else {}
+        uid = uuid.UUID(user_dict.get("id"))
+        return Profile.objects.get(supabase_uid=uid)
+    except Exception:
+        return None
+
+
+def _recalculate_fragrance_stats(perfume):
+    """
+    Recompute all denormalised community-stat columns on a Perfume instance
+    from the current set of reviews, then save. Safe to call anytime.
+    """
+    from django.db.models import Avg
+    from reviews.models import Review
+
+    reviews = perfume.reviews.all()
+    count = reviews.count()
+
+    perfume.rating_count = count
+    if count == 0:
+        perfume.rating_value    = None
+        perfume.maceration_average = None
+    else:
+        perfume.rating_value       = reviews.aggregate(avg=Avg("rating"))["avg"]
+        perfume.maceration_average = reviews.exclude(maceration=None).aggregate(avg=Avg("maceration"))["avg"]
+
+    # Season / occasion
+    perfume.summer_count = reviews.filter(summer=True).count()
+    perfume.winter_count = reviews.filter(winter=True).count()
+    perfume.day_count    = reviews.filter(day=True).count()
+    perfume.night_count  = reviews.filter(night=True).count()
+
+    # Sillage
+    perfume.no_sillage_count       = reviews.filter(sillage=Review.Sillage.NO_SILLAGE).count()
+    perfume.light_sillage_count    = reviews.filter(sillage=Review.Sillage.LIGHT_SILLAGE).count()
+    perfume.moderate_sillage_count = reviews.filter(sillage=Review.Sillage.MODERATE_SILLAGE).count()
+    perfume.strong_sillage_count   = reviews.filter(sillage=Review.Sillage.STRONG_SILLAGE).count()
+
+    # Longevity
+    perfume.h0_2_longevity_count     = reviews.filter(longevity=Review.Longevity.H0_2).count()
+    perfume.h2_4_longevity_count     = reviews.filter(longevity=Review.Longevity.H2_4).count()
+    perfume.h4_6_longevity_count     = reviews.filter(longevity=Review.Longevity.H4_6).count()
+    perfume.h6_8_longevity_count     = reviews.filter(longevity=Review.Longevity.H6_8).count()
+    perfume.h8_10_longevity_count    = reviews.filter(longevity=Review.Longevity.H8_10).count()
+    perfume.h10_plus_longevity_count = reviews.filter(longevity=Review.Longevity.H10_PLUS).count()
+
+    # Value
+    perfume.super_overpriced_value_count = reviews.filter(value=Review.Value.SUPER_OVERPRICED).count()
+    perfume.overpriced_value_count       = reviews.filter(value=Review.Value.OVERPRICED).count()
+    perfume.alright_value_count          = reviews.filter(value=Review.Value.ALRIGHT).count()
+    perfume.good_value_count             = reviews.filter(value=Review.Value.GOOD_VALUE).count()
+    perfume.super_value_count            = reviews.filter(value=Review.Value.SUPER_VALUE).count()
+
+    # Gender impression
+    perfume.gender_female_count          = reviews.filter(gender=Review.Gender.FEMALE).count()
+    perfume.gender_slightly_female_count = reviews.filter(gender=Review.Gender.SLIGHTLY_FEMALE).count()
+    perfume.gender_unisex_count          = reviews.filter(gender=Review.Gender.UNISEX).count()
+    perfume.gender_slightly_male_count   = reviews.filter(gender=Review.Gender.SLIGHTLY_MALE).count()
+    perfume.gender_male_count            = reviews.filter(gender=Review.Gender.MALE).count()
+
+    perfume.save()
+
+
 def _summarized_profiles_from_queryset(qs):
     profiles = [{"uid": f_profile.supabase_uid, "profile_picture": f_profile.profile_picture, "username": f_profile.username} for f_profile in qs]
     return profiles

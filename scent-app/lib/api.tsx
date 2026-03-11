@@ -1,5 +1,5 @@
 // lib/api.ts
-export const API_BASE_URL = "http://10.186.43.252:8000";
+export const API_BASE_URL = "http://10.0.0.14:8000";
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   console.log(`${API_BASE_URL}${path}`)
@@ -84,6 +84,38 @@ export type FragranceApiItem = {
   mainaccord3?: string;
   mainaccord4?: string;
   mainaccord5?: string;
+
+  // Community stats
+  summer_count?: number;
+  winter_count?: number;
+  day_count?: number;
+  night_count?: number;
+
+  light_sillage_count?: number;
+  moderate_sillage_count?: number;
+  strong_sillage_count?: number;
+  no_sillage_count?: number;
+
+  h0_2_longevity_count?: number;
+  h2_4_longevity_count?: number;
+  h4_6_longevity_count?: number;
+  h6_8_longevity_count?: number;
+  h8_10_longevity_count?: number;
+  h10_plus_longevity_count?: number;
+
+  super_overpriced_value_count?: number;
+  overpriced_value_count?: number;
+  alright_value_count?: number;
+  good_value_count?: number;
+  super_value_count?: number;
+
+  gender_female_count?: number;
+  gender_slightly_female_count?: number;
+  gender_unisex_count?: number;
+  gender_slightly_male_count?: number;
+  gender_male_count?: number;
+
+  maceration_average?: number | null;
 };
 
 export type CollectionItem = FragranceApiItem & {
@@ -226,4 +258,89 @@ export async function searchFragrances(name?: string, page: number = 1) {
 
 export async function getFragranceById(id: number): Promise<FragranceApiItem> {
   return request<FragranceApiItem>(`/api/fragrances/get/?id=${id}`, { method: "GET" });
+}
+
+// ===== Fragrance Likes =====
+
+export async function toggleFragranceLike(
+  perfumeId: number,
+  accessToken: string
+): Promise<{ perfume_id: number; liked: boolean }> {
+  return request(`/api/fragrances/likes/toggle/`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ perfume_id: perfumeId }),
+  });
+}
+
+export async function getLikedFragrances(
+  accessToken: string
+): Promise<{ liked_fragrances: FragranceApiItem[] }> {
+  return request(`/api/fragrances/likes/get/`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+}
+
+// ===== Wishlist =====
+
+export async function toggleWishlist(
+  perfumeId: number,
+  accessToken: string
+): Promise<{ perfume_id: number; message: string }> {
+  return request(`/api/fragrances/wishlist/toggle/`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ perfume_id: perfumeId }),
+  });
+}
+
+export async function getWishlist(
+  accessToken: string
+): Promise<{ wishlist: FragranceApiItem[] }> {
+  return request(`/api/fragrances/wishlist/get/`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+}
+
+// ===== Following Daily Scents =====
+
+export type FollowingWithScent = {
+  uid: string;
+  username: string;
+  profile_picture: string | null;
+  daily_scent: FragranceApiItem | null;
+};
+
+export async function getFollowingDailyScents(
+  accessToken: string
+): Promise<{ following: FollowingWithScent[] }> {
+  const timestamp = new Date().toISOString();
+  return request(`/api/user/following/daily-scents?timestamp=${encodeURIComponent(timestamp)}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+}
+
+// ===== Events =====
+
+export type AppEvent = {
+  id: number;
+  user_id: string;
+  username: string | null;
+  action: string;
+  value: string | null;
+  target_label: string | null;
+  timestamp: string;
+};
+
+export async function getUserEvents(
+  uid: string,
+  accessToken: string
+): Promise<{ count: number; results: AppEvent[] }> {
+  return request(`/api/events/?uid=${encodeURIComponent(uid)}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
 }

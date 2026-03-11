@@ -25,6 +25,7 @@ from django.views.decorators.http import require_http_methods
 from user.models import Profile
 from .models import PerfumeCollected, Perfume
 from helpers import _parse_json_body, _parse_json_body_optional, _get_profile_by_uid, _get_uid_from_bearer, _profile_to_dict, _fragrance_to_dict
+from events.models import Event
 import openmeteo_requests
 
 # -------------------------
@@ -210,7 +211,7 @@ def fragrance_get(request):
     except Perfume.DoesNotExist:
         return JsonResponse({"error": "Fragrance not found"}, status=404)
     
-    if fragrance.updated_at > timezone.now() - timedelta(days=3):
+    if fragrance.updated_at < timezone.now() - timedelta(days=3):
         reviews = fragrance.reviews.all()
         fragrance.rating_value = reviews.aggregate(Avg("rating"))["rating__avg"]
         fragrance.rating_count = len(reviews)
@@ -290,6 +291,7 @@ def create_daily_scent(request):
             except Exception:
                 pass
         DailyScent.objects.filter(user_id=user_id_str, day=day_date).delete()
+        Event.objects.create(user_id=user_id, action=Event.Action.DAILY_SCENT_REMOVE, value=day_str)
         return JsonResponse({"message": "deleted key"}, status=201)
 
     # Try Redis first; fall back to DB on failure or if Redis unavailable
@@ -297,6 +299,7 @@ def create_daily_scent(request):
     if redis_client:
         try:
             redis_client.set(key, str(perfume_id), ex=TTL_SECONDS)
+            Event.objects.create(user_id=user_id, action=Event.Action.DAILY_SCENT_SET, value=str(perfume_id))
             return JsonResponse({"day": day_str, "perfume_id": perfume_id}, status=201)
         except Exception:
             pass  # fall through to DB fallback
@@ -308,6 +311,7 @@ def create_daily_scent(request):
     DailyScent.objects.update_or_create(
         user_id=user_id_str, day=day_date, defaults={"perfume": perfume}
     )
+    Event.objects.create(user_id=user_id, action=Event.Action.DAILY_SCENT_SET, value=str(perfume_id))
     return JsonResponse({"day": day_str, "perfume_id": perfume_id}, status=201)
 
 
@@ -424,8 +428,10 @@ def toggle_collection(request):
     if not created:
         # Already exists → remove it
         collected.delete()
+        Event.objects.create(user_id=user_id, action=Event.Action.COLLECTION_REMOVE, value=str(perfume_id))
         return JsonResponse({"message": "Perfume removed from collection", "perfume_id": perfume_id}, status=200)
-    
+
+    Event.objects.create(user_id=user_id, action=Event.Action.COLLECTION_ADD, value=str(perfume_id))
     return JsonResponse({"message": "Perfume added to collection", "perfume_id": perfume_id}, status=201)
 
 @csrf_exempt
@@ -445,6 +451,110 @@ def get_collection(request):
     
     collection = _profile_to_dict(profile).get("collection", [])
     return JsonResponse({"collection": collection}, status=200)
+
+# -------------------------
+# Perfume like endpoints
+# -------------------------
+@csrf_exempt
+@require_POST
+def toggle_fragrance_like(request):
+    user_id, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(user_id)
+    if err:
+        return err
+
+    try:
+        body = json.loads(request.body)
+        perfume_id = body.get("perfume_id")
+        if not perfume_id:
+            return JsonResponse({"error": "perfume_id is required"}, status=400)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    try:
+        perfume = Perfume.objects.get(id=perfume_id)
+    except Perfume.DoesNotExist:
+        return JsonResponse({"error": "Perfume not found"}, status=404)
+
+    if profile.liked_fragrances.filter(id=perfume.id).exists():
+        profile.liked_fragrances.remove(perfume)
+        Event.objects.create(user_id=user_id, action=Event.Action.UNLIKE_FRAGRANCE, value=str(perfume_id))
+        return JsonResponse({"message": "Fragrance unliked", "perfume_id": perfume_id, "liked": False}, status=200)
+
+    profile.liked_fragrances.add(perfume)
+    Event.objects.create(user_id=user_id, action=Event.Action.LIKE_FRAGRANCE, value=str(perfume_id))
+    return JsonResponse({"message": "Fragrance liked", "perfume_id": perfume_id, "liked": True}, status=201)
+
+
+@csrf_exempt
+@require_GET
+def get_liked_fragrances(request):
+    user_id, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(user_id)
+    if err:
+        return err
+
+    liked = [_fragrance_to_dict(p) for p in profile.liked_fragrances.all()]
+    return JsonResponse({"liked_fragrances": liked}, status=200)
+
+
+# -------------------------
+# Perfume wishlist endpoints
+# -------------------------
+@csrf_exempt
+@require_POST
+def toggle_wishlist(request):
+    user_id, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(user_id)
+    if err:
+        return err
+
+    try:
+        body = json.loads(request.body)
+        perfume_id = body.get("perfume_id")
+        if not perfume_id:
+            return JsonResponse({"error": "perfume_id is required"}, status=400)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    try:
+        perfume = Perfume.objects.get(id=perfume_id)
+    except Perfume.DoesNotExist:
+        return JsonResponse({"error": "Perfume not found"}, status=404)
+
+    if profile.wishlist.filter(id=perfume.id).exists():
+        profile.wishlist.remove(perfume)
+        Event.objects.create(user_id=user_id, action=Event.Action.WISHLIST_REMOVE, value=str(perfume_id))
+        return JsonResponse({"message": "Perfume removed from wishlist", "perfume_id": perfume_id}, status=200)
+
+    profile.wishlist.add(perfume)
+    Event.objects.create(user_id=user_id, action=Event.Action.WISHLIST_ADD, value=str(perfume_id))
+    return JsonResponse({"message": "Perfume added to wishlist", "perfume_id": perfume_id}, status=201)
+
+
+@csrf_exempt
+@require_GET
+def get_wishlist(request):
+    user_id, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(user_id)
+    if err:
+        return err
+
+    wishlist = [_fragrance_to_dict(p) for p in profile.wishlist.all()]
+    return JsonResponse({"wishlist": wishlist}, status=200)
+
 
 def get_weather(coordinates):
     params = {

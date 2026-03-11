@@ -31,7 +31,7 @@ SECRET_KEY = 'django-insecure-)97w8*e#5g^z2ansonmqxcz=bjt@vzvv+y25i94fl!$u*vw*+-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["192.168.1.33", "127.0.0.1", "192.168.4.54", "10.186.43.252", "10.184.24.77", "192.168.68.110", "10.0.0.14","localhost"]
+ALLOWED_HOSTS = ["192.168.1.33", "127.0.0.1", "192.168.4.54", "10.186.43.252", "10.184.24.77", "192.168.68.110", "10.0.0.14","localhost", "*"]
 
 
 # Application definition
@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'user',
     'perfumes',
     'reviews',
+    'events',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',

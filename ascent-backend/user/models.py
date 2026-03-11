@@ -31,6 +31,12 @@ class Profile(models.Model):
     wishlist = models.ManyToManyField(
         "perfumes.Perfume",
         blank=True,
+        related_name="wishlisted_by",
+    )
+    liked_fragrances = models.ManyToManyField(
+        "perfumes.Perfume",
+        blank=True,
+        related_name="liked_by",
     )
 
     class Meta:

@@ -17,10 +17,39 @@ import {
   getFollowing,
   getFollowers,
   getFragranceById,
+  getUserEvents,
+  getLikedFragrances,
+  getWishlist,
   type UserSummary,
   type FragranceApiItem,
+  type AppEvent,
 } from "../../lib/api";
 import { getMyReviews, deleteReview, type Review } from "../../lib/reviews";
+
+function formatEvent(ev: AppEvent): string {
+  const who = ev.username ?? "Someone";
+  const target = ev.target_label;
+  switch (ev.action) {
+    case "COLLECTION_ADD":    return target ? `${who} added ${target} to their collection` : `${who} added a fragrance to their collection`;
+    case "COLLECTION_REMOVE": return target ? `${who} removed ${target} from their collection` : `${who} removed a fragrance from their collection`;
+    case "DAILY_SCENT_SET":   return target ? `${who} set ${target} as their daily scent` : `${who} set a daily scent`;
+    case "DAILY_SCENT_REMOVE":return `${who} removed their daily scent`;
+    case "FOLLOW":            return target ? `${who} followed ${target}` : `${who} followed someone`;
+    case "UNFOLLOW":          return target ? `${who} unfollowed ${target}` : `${who} unfollowed someone`;
+    case "REVIEW_CREATE":     return target ? `${who} reviewed ${target}` : `${who} wrote a review`;
+    case "REVIEW_UPDATE":     return target ? `${who} updated their review of ${target}` : `${who} updated a review`;
+    case "REVIEW_DELETE":     return target ? `${who} deleted their review of ${target}` : `${who} deleted a review`;
+    case "WISHLIST_ADD":      return target ? `${who} wishlisted ${target}` : `${who} added to wishlist`;
+    case "WISHLIST_REMOVE":   return target ? `${who} removed ${target} from wishlist` : `${who} removed from wishlist`;
+    case "LIKE_FRAGRANCE":    return target ? `${who} liked ${target}` : `${who} liked a fragrance`;
+    case "UNLIKE_FRAGRANCE":  return target ? `${who} unliked ${target}` : `${who} unliked a fragrance`;
+    case "LIKE_REVIEW":       return target ? `${who} liked a review of ${target}` : `${who} liked a review`;
+    case "UNLIKE_REVIEW":     return target ? `${who} unliked a review of ${target}` : `${who} unliked a review`;
+    case "LIKE_COMMENT":      return target ? `${who} liked a comment on ${target}` : `${who} liked a comment`;
+    case "UNLIKE_COMMENT":    return target ? `${who} unliked a comment on ${target}` : `${who} unliked a comment`;
+    default:                  return `${who}: ${ev.action}`;
+  }
+}
 
 const OCCASIONS = [
   { key: "winter", label: "Winter", icon: "snow-outline" },
@@ -58,6 +87,10 @@ export default function ProfileHomeScreen() {
   const [reviewsLoading, setReviewsLoading] = useState(false);
   const [deletingReviewId, setDeletingReviewId] = useState<number | null>(null);
 
+  const [events, setEvents] = useState<AppEvent[]>([]);
+  const [likedFragrances, setLikedFragrances] = useState<FragranceApiItem[]>([]);
+  const [wishlist, setWishlist] = useState<FragranceApiItem[]>([]);
+
   useEffect(() => {
     const load = async () => {
       try {
@@ -88,6 +121,26 @@ export default function ProfileHomeScreen() {
           setFollowersCount(followersRes.followers.length);
         } catch {
           // ignore; counts stay 0
+        }
+
+        try {
+          const profileRaw = await AsyncStorage.getItem("profile");
+          if (profileRaw) {
+            const profile = JSON.parse(profileRaw);
+            const uid = profile?.supabase_uid;
+            if (uid) {
+              const [eventsRes, likedRes, wishlistRes] = await Promise.all([
+                getUserEvents(uid, token).catch(() => ({ count: 0, results: [] })),
+                getLikedFragrances(token).catch(() => ({ liked_fragrances: [] })),
+                getWishlist(token).catch(() => ({ wishlist: [] })),
+              ]);
+              setEvents(eventsRes.results.slice(0, 20));
+              setLikedFragrances(likedRes.liked_fragrances ?? []);
+              setWishlist(wishlistRes.wishlist ?? []);
+            }
+          }
+        } catch {
+          // ignore
         }
 
         setReviewsLoading(true);
@@ -272,7 +325,14 @@ export default function ProfileHomeScreen() {
           myReviews.map((review) => {
             const fragrance = fragranceNames[review.fid];
             return (
-              <View key={review.id} style={styles.reviewCard}>
+              <TouchableOpacity
+                key={review.id}
+                style={styles.reviewCard}
+                activeOpacity={0.85}
+                onPress={() => {
+                  if (fragrance) router.push({ pathname: "/tabs/fragrance-details", params: { data: JSON.stringify(fragrance) } });
+                }}
+              >
                 <View style={styles.reviewCardHeader}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.reviewFragranceName} numberOfLines={1}>
@@ -332,9 +392,71 @@ export default function ProfileHomeScreen() {
                     {review.value === "Alright" ? "Perfectly Priced" : review.value}
                   </Text>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })
+        )}
+
+        {/* Liked Fragrances */}
+        <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Liked Fragrances</Text>
+        {likedFragrances.length === 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.emptySubtitle}>No liked fragrances yet.</Text>
+          </View>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
+            {likedFragrances.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.fragranceCard}
+                activeOpacity={0.85}
+                onPress={() => router.push({ pathname: "/tabs/fragrance-details", params: { data: JSON.stringify(item) } })}
+              >
+                <Text style={styles.fragranceCardName} numberOfLines={2}>{item.fragrance?.replaceAll("-", " ")}</Text>
+                <Text style={styles.fragranceCardBrand} numberOfLines={1}>{item.brand?.replaceAll("-", " ")}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+
+        {/* Wishlist */}
+        <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Wishlist</Text>
+        {wishlist.length === 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.emptySubtitle}>Wishlist is empty.</Text>
+          </View>
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
+            {wishlist.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.fragranceCard}
+                activeOpacity={0.85}
+                onPress={() => router.push({ pathname: "/tabs/fragrance-details", params: { data: JSON.stringify(item) } })}
+              >
+                <Text style={styles.fragranceCardName} numberOfLines={2}>{item.fragrance?.replaceAll("-", " ")}</Text>
+                <Text style={styles.fragranceCardBrand} numberOfLines={1}>{item.brand?.replaceAll("-", " ")}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
+
+        {/* Recent Activity */}
+        <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Recent Activity</Text>
+        {events.length === 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.emptySubtitle}>No recent activity.</Text>
+          </View>
+        ) : (
+          events.map((ev) => (
+            <View key={ev.id} style={styles.eventRow}>
+              <View style={styles.eventDot} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.eventLabel}>{formatEvent(ev)}</Text>
+                <Text style={styles.eventTime}>{new Date(ev.timestamp).toLocaleString()}</Text>
+              </View>
+            </View>
+          ))
         )}
 
         <TouchableOpacity style={styles.logoutBtn} onPress={logout}>
@@ -462,6 +584,16 @@ const styles = StyleSheet.create({
   reviewMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 4 },
   reviewMetaText: { fontSize: 12, color: "#777", fontWeight: "600" },
   reviewMetaDot: { fontSize: 12, color: "#bbb" },
+
+  horizontalList: { paddingVertical: 8 },
+  fragranceCard: { width: 160, backgroundColor: "#fafafa", borderRadius: 16, padding: 14, marginRight: 12 },
+  fragranceCardName: { fontSize: 14, fontWeight: "900", color: "#111", lineHeight: 18 },
+  fragranceCardBrand: { fontSize: 12, color: "#666", marginTop: 4 },
+
+  eventRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingVertical: 10, backgroundColor: "#fafafa", borderRadius: 12, paddingHorizontal: 12, marginTop: 8 },
+  eventDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#111", marginTop: 4 },
+  eventLabel: { fontSize: 13.5, fontWeight: "700", color: "#111" },
+  eventTime: { fontSize: 11.5, color: "#888", marginTop: 2 },
 
   logoutBtn: {
     marginTop: 24,

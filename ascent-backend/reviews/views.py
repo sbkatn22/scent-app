@@ -8,19 +8,83 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 
+from django.db.models import Avg
+
 from user.models import Profile
 from perfumes.models import Perfume
 
-from .models import Review
-from helpers import _parse_json_body, _parse_json_body_optional, _get_profile_by_uid, _get_uid_from_bearer, _profile_to_dict, _fragrance_to_dict
+from .models import Review, Comment
+from events.models import Event
+from helpers import _parse_json_body, _parse_json_body_optional, _get_profile_by_uid, _get_uid_from_bearer, _profile_to_dict, _fragrance_to_dict, _get_profile_optional
 
-def _review_to_dict(instance):
+def _recalculate_perfume_stats(perfume):
+    """Recompute all denormalised stat columns on a Perfume from its reviews."""
+    reviews = Review.objects.filter(perfume=perfume)
+    count = reviews.count()
+
+    perfume.rating_count = count
+    if count == 0:
+        perfume.rating_value = None
+        perfume.maceration_average = None
+    else:
+        perfume.rating_value = reviews.aggregate(avg=Avg("rating"))["avg"]
+        mac = reviews.exclude(maceration=None).aggregate(avg=Avg("maceration"))["avg"]
+        perfume.maceration_average = mac
+
+    # Season / occasion
+    perfume.summer_count = reviews.filter(summer=True).count()
+    perfume.winter_count = reviews.filter(winter=True).count()
+    perfume.day_count    = reviews.filter(day=True).count()
+    perfume.night_count  = reviews.filter(night=True).count()
+
+    # Sillage
+    perfume.no_sillage_count       = reviews.filter(sillage="No Sillage").count()
+    perfume.light_sillage_count    = reviews.filter(sillage="Light Sillage").count()
+    perfume.moderate_sillage_count = reviews.filter(sillage="Moderate Sillage").count()
+    perfume.strong_sillage_count   = reviews.filter(sillage="Strong Sillage").count()
+
+    # Longevity
+    perfume.h0_2_longevity_count     = reviews.filter(longevity="0 - 2 hours").count()
+    perfume.h2_4_longevity_count     = reviews.filter(longevity="2 - 4 hours").count()
+    perfume.h4_6_longevity_count     = reviews.filter(longevity="4 - 6 hours").count()
+    perfume.h6_8_longevity_count     = reviews.filter(longevity="6 - 8 hours").count()
+    perfume.h8_10_longevity_count    = reviews.filter(longevity="8-10 hours").count()
+    perfume.h10_plus_longevity_count = reviews.filter(longevity="10+ hours").count()
+
+    # Value
+    perfume.super_overpriced_value_count = reviews.filter(value="Super Overpriced").count()
+    perfume.overpriced_value_count       = reviews.filter(value="Overpriced").count()
+    perfume.alright_value_count          = reviews.filter(value="Alright").count()
+    perfume.good_value_count             = reviews.filter(value="Good Value").count()
+    perfume.super_value_count            = reviews.filter(value="Super Value").count()
+
+    # Gender impression
+    perfume.gender_female_count          = reviews.filter(gender="Female").count()
+    perfume.gender_slightly_female_count = reviews.filter(gender="Slightly Female").count()
+    perfume.gender_unisex_count          = reviews.filter(gender="Unisex").count()
+    perfume.gender_slightly_male_count   = reviews.filter(gender="Slightly Male").count()
+    perfume.gender_male_count            = reviews.filter(gender="Male").count()
+
+    perfume.save()
+
+
+def _review_to_dict(instance, profile=None, liked_review_ids=None):
     """
     Serialize a Review instance to a dictionary for JSON responses.
+    Pass profile (or liked_review_ids set) to populate the `liked` field.
     """
+    if liked_review_ids is not None:
+        liked = instance.id in liked_review_ids
+    elif profile is not None:
+        liked = instance.likes.filter(id=profile.id).exists()
+    else:
+        liked = False
+
     return {
         "id": instance.id,
         "uid": str(instance.profile.supabase_uid),
+        "username": instance.profile.username,
+        "profile_picture": instance.profile.profile_picture or "",
         "fid": instance.perfume.id,
         "description": instance.description,
         "rating": float(instance.rating),
@@ -34,6 +98,8 @@ def _review_to_dict(instance):
         "longevity": instance.longevity,
         "value": instance.value,
         "maceration": instance.maceration,
+        "like_count": instance.likes.count(),
+        "liked": liked,
         "created_at": instance.created_at.isoformat(),
         "updated_at": instance.updated_at.isoformat(),
     }
@@ -61,17 +127,16 @@ def reviews_for_fragrance(request):
             status=400,
         )
 
-    reviews = Review.objects.filter(perfume_id=perfume_id).select_related(
-        "profile", "perfume"
-    )
-    data = [_review_to_dict(r) for r in reviews]
+    profile = _get_profile_optional(request)
+    reviews = Review.objects.filter(perfume_id=perfume_id).select_related("profile", "perfume")
 
-    return JsonResponse(
-        {
-            "count": len(data),
-            "results": data,
-        }
-    )
+    liked_review_ids = set(
+        profile.liked_reviews.values_list("id", flat=True)
+    ) if profile else None
+
+    data = [_review_to_dict(r, liked_review_ids=liked_review_ids) for r in reviews]
+
+    return JsonResponse({"count": len(data), "results": data})
 
 @require_GET
 def reviews_for_user(request):
@@ -91,13 +156,9 @@ def reviews_for_user(request):
     if err:
         return err
 
-    reviews = (
-        Review.objects
-        .filter(profile=profile)
-        .select_related("profile", "perfume")
-    )
-
-    data = [_review_to_dict(r) for r in reviews]
+    reviews = Review.objects.filter(profile=profile).select_related("profile", "perfume")
+    liked_review_ids = set(profile.liked_reviews.values_list("id", flat=True))
+    data = [_review_to_dict(r, liked_review_ids=liked_review_ids) for r in reviews]
     return JsonResponse({"count": len(data), "results": data})
 
 @csrf_exempt
@@ -251,7 +312,8 @@ def review_create(request):
         maceration=maceration,
     )
 
-    return JsonResponse(_review_to_dict(review), status=201)
+    Event.objects.create(user_id=uid_raw, action=Event.Action.REVIEW_CREATE, value=str(perfume.id))
+    return JsonResponse(_review_to_dict(review, profile=profile), status=201)
 
 
 @csrf_exempt
@@ -345,7 +407,8 @@ def review_update(request, review_id):
         review.maceration = maceration
 
     review.save()
-    return JsonResponse(_review_to_dict(review), status=200)
+    Event.objects.create(user_id=uid_raw, action=Event.Action.REVIEW_UPDATE, value=str(review.perfume.id))
+    return JsonResponse(_review_to_dict(review, profile=profile), status=200)
 
 
 @csrf_exempt
@@ -369,12 +432,264 @@ def review_delete(request, review_id):
         return err
 
     try:
-        review = Review.objects.select_related("profile").get(id=review_id)
+        review = Review.objects.select_related("profile", "perfume").get(id=review_id)
     except Review.DoesNotExist:
         return JsonResponse({"error": "Review not found"}, status=404)
 
     if review.profile.supabase_uid != profile.supabase_uid:
         return JsonResponse({"error": "You can only delete your own reviews"}, status=403)
 
+    perfume_id = review.perfume.id
     review.delete()
+    Event.objects.create(user_id=uid_raw, action=Event.Action.REVIEW_DELETE, value=str(perfume_id))
     return JsonResponse({}, status=204)
+
+
+# -------------------------
+# Comment helpers
+# -------------------------
+def _comment_to_dict(comment, liked_comment_ids=None):
+    if liked_comment_ids is not None:
+        liked = comment.id in liked_comment_ids
+    else:
+        liked = False
+
+    return {
+        "id": comment.id,
+        "review_id": comment.review_id,
+        "parent_id": comment.parent_id,
+        "content": comment.content,
+        "author": {
+            "uid": str(comment.profile.supabase_uid),
+            "username": comment.profile.username,
+            "profile_picture": comment.profile.profile_picture or "",
+        },
+        "like_count": comment.likes.count(),
+        "liked": liked,
+        "created_at": comment.created_at.isoformat(),
+        "updated_at": comment.updated_at.isoformat(),
+        "replies": [],
+    }
+
+
+def _build_comment_tree(comments, liked_comment_ids=None):
+    """Build a nested comment tree from a flat list of Comment instances."""
+    lookup = {}
+    for c in comments:
+        lookup[c.id] = _comment_to_dict(c, liked_comment_ids=liked_comment_ids)
+    roots = []
+    for c in comments:
+        if c.parent_id is None:
+            roots.append(lookup[c.id])
+        else:
+            parent = lookup.get(c.parent_id)
+            if parent is not None:
+                parent["replies"].append(lookup[c.id])
+    return roots
+
+
+# -------------------------
+# Comment endpoints
+# -------------------------
+@require_GET
+def comments_for_review(request):
+    review_id = request.GET.get("review_id")
+    if not review_id:
+        return JsonResponse({"error": "review_id is required"}, status=400)
+
+    try:
+        review_id = int(review_id)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "review_id must be an integer"}, status=400)
+
+    if not Review.objects.filter(id=review_id).exists():
+        return JsonResponse({"error": "Review not found"}, status=404)
+
+    profile = _get_profile_optional(request)
+    comments = Comment.objects.filter(review_id=review_id).select_related("profile")
+
+    liked_comment_ids = set(
+        profile.liked_comments.values_list("id", flat=True)
+    ) if profile else None
+
+    tree = _build_comment_tree(comments, liked_comment_ids=liked_comment_ids)
+    return JsonResponse({"comments": tree}, status=200)
+
+
+@csrf_exempt
+@require_POST
+def comment_create(request):
+    uid, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(uid)
+    if err:
+        return err
+
+    try:
+        body = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    review_id = body.get("review_id")
+    content = str(body.get("content", "")).strip()
+    parent_id = body.get("parent_id")
+
+    if not review_id:
+        return JsonResponse({"error": "review_id is required"}, status=400)
+    if not content:
+        return JsonResponse({"error": "content is required"}, status=400)
+    if len(content) > 1000:
+        return JsonResponse({"error": "content exceeds 1000 characters"}, status=400)
+
+    try:
+        review = Review.objects.get(id=review_id)
+    except Review.DoesNotExist:
+        return JsonResponse({"error": "Review not found"}, status=404)
+
+    parent = None
+    if parent_id is not None:
+        try:
+            parent = Comment.objects.get(id=parent_id, review=review)
+        except Comment.DoesNotExist:
+            return JsonResponse({"error": "Parent comment not found"}, status=404)
+
+    comment = Comment.objects.create(
+        review=review,
+        profile=profile,
+        parent=parent,
+        content=content,
+    )
+    return JsonResponse(_comment_to_dict(comment), status=201)
+
+
+@csrf_exempt
+@require_http_methods(["PATCH"])
+def comment_update(request, comment_id):
+    uid, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(uid)
+    if err:
+        return err
+
+    try:
+        comment = Comment.objects.select_related("profile").get(id=comment_id)
+    except Comment.DoesNotExist:
+        return JsonResponse({"error": "Comment not found"}, status=404)
+
+    if comment.profile.supabase_uid != profile.supabase_uid:
+        return JsonResponse({"error": "You can only edit your own comments"}, status=403)
+
+    try:
+        body = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    content = str(body.get("content", "")).strip()
+    if not content:
+        return JsonResponse({"error": "content is required"}, status=400)
+    if len(content) > 1000:
+        return JsonResponse({"error": "content exceeds 1000 characters"}, status=400)
+
+    comment.content = content
+    comment.save()
+    return JsonResponse(_comment_to_dict(comment), status=200)
+
+
+@csrf_exempt
+@require_http_methods(["DELETE"])
+def comment_delete(request, comment_id):
+    uid, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(uid)
+    if err:
+        return err
+
+    try:
+        comment = Comment.objects.select_related("profile").get(id=comment_id)
+    except Comment.DoesNotExist:
+        return JsonResponse({"error": "Comment not found"}, status=404)
+
+    if comment.profile.supabase_uid != profile.supabase_uid:
+        return JsonResponse({"error": "You can only delete your own comments"}, status=403)
+
+    comment.delete()
+    return JsonResponse({}, status=204)
+
+
+# -------------------------
+# Like endpoints
+# -------------------------
+@csrf_exempt
+@require_POST
+def toggle_review_like(request):
+    uid, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(uid)
+    if err:
+        return err
+
+    try:
+        body = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    review_id = body.get("review_id")
+    if not review_id:
+        return JsonResponse({"error": "review_id is required"}, status=400)
+
+    try:
+        review = Review.objects.select_related("profile", "perfume").get(id=review_id)
+    except Review.DoesNotExist:
+        return JsonResponse({"error": "Review not found"}, status=404)
+
+    if review.likes.filter(id=profile.id).exists():
+        review.likes.remove(profile)
+        Event.objects.create(user_id=uid, action=Event.Action.UNLIKE_REVIEW, value=str(review_id))
+        return JsonResponse({"message": "Review unliked", "review_id": review_id, "like_count": review.likes.count(), "liked": False}, status=200)
+
+    review.likes.add(profile)
+    Event.objects.create(user_id=uid, action=Event.Action.LIKE_REVIEW, value=str(review_id))
+    return JsonResponse({"message": "Review liked", "review_id": review_id, "like_count": review.likes.count(), "liked": True}, status=200)
+
+
+@csrf_exempt
+@require_POST
+def toggle_comment_like(request):
+    uid, err = _get_uid_from_bearer(request)
+    if err:
+        return err
+
+    profile, err = _get_profile_by_uid(uid)
+    if err:
+        return err
+
+    try:
+        body = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    comment_id = body.get("comment_id")
+    if not comment_id:
+        return JsonResponse({"error": "comment_id is required"}, status=400)
+
+    try:
+        comment = Comment.objects.select_related("profile").get(id=comment_id)
+    except Comment.DoesNotExist:
+        return JsonResponse({"error": "Comment not found"}, status=404)
+
+    if comment.likes.filter(id=profile.id).exists():
+        comment.likes.remove(profile)
+        Event.objects.create(user_id=uid, action=Event.Action.UNLIKE_COMMENT, value=str(comment_id))
+        return JsonResponse({"message": "Comment unliked", "comment_id": comment_id, "like_count": comment.likes.count(), "liked": False}, status=200)
+
+    comment.likes.add(profile)
+    Event.objects.create(user_id=uid, action=Event.Action.LIKE_COMMENT, value=str(comment_id))
+    return JsonResponse({"message": "Comment liked", "comment_id": comment_id, "like_count": comment.likes.count(), "liked": True}, status=200)

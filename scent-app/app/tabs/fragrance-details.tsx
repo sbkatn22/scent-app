@@ -21,7 +21,9 @@ import {
 
 import { useCollection } from "@/contexts/collection-context";
 import type { FragranceApiItem } from "@/lib/api";
-import { createReview, updateReview, getReviewsForFragrance, Review } from "@/lib/reviews";
+import { toggleFragranceLike, toggleWishlist } from "@/lib/api";
+import { FragranceStats } from "@/components/fragrance-stats";
+import { createReview, updateReview, getReviewsForFragrance, toggleReviewLike, getComments, createComment, toggleCommentLike, type Review, type Comment } from "@/lib/reviews";
 
 type FragranceItem = FragranceApiItem & { size?: string };
 
@@ -280,6 +282,109 @@ export default function FragranceDetailsScreen() {
     }
   };
 
+  // ===== Fragrance like / wishlist =====
+  const [fragranceLiked, setFragranceLiked] = useState(false);
+  const [wishlisted, setWishlisted] = useState(false);
+  const [likeLoading, setLikeLoading] = useState(false);
+  const [wishlistLoading, setWishlistLoading] = useState(false);
+
+  const handleFragranceLike = async () => {
+    if (!fragrance?.id || likeLoading) return;
+    setLikeLoading(true);
+    try {
+      const token = await AsyncStorage.getItem("access_token");
+      if (!token) return;
+      const res = await toggleFragranceLike(fragrance.id, token);
+      setFragranceLiked(res.liked);
+    } catch (_) {} finally {
+      setLikeLoading(false);
+    }
+  };
+
+  const handleWishlist = async () => {
+    if (!fragrance?.id || wishlistLoading) return;
+    setWishlistLoading(true);
+    try {
+      const token = await AsyncStorage.getItem("access_token");
+      if (!token) return;
+      const res = await toggleWishlist(fragrance.id, token);
+      const msg = res.message.toLowerCase();
+      setWishlisted(msg.includes("added") || (msg.includes("wishlist") && !msg.includes("removed")));
+    } catch (_) {} finally {
+      setWishlistLoading(false);
+    }
+  };
+
+  // ===== Review likes =====
+  const handleReviewLike = async (reviewId: number) => {
+    try {
+      const res = await toggleReviewLike(reviewId);
+      setReviews((prev) =>
+        prev.map((r) => r.id === reviewId ? { ...r, like_count: res.like_count, liked: res.liked } : r)
+      );
+    } catch (_) {}
+  };
+
+  // ===== Comments =====
+  const [openCommentsForReview, setOpenCommentsForReview] = useState<number | null>(null);
+  const [commentsMap, setCommentsMap] = useState<Record<number, Comment[]>>({});
+  const [commentsLoadingSet, setCommentsLoadingSet] = useState<Set<number>>(new Set());
+  const [commentInput, setCommentInput] = useState("");
+  const [replyingTo, setReplyingTo] = useState<{ commentId: number; username: string } | null>(null);
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+
+  const loadComments = async (reviewId: number) => {
+    setCommentsLoadingSet((prev) => new Set(prev).add(reviewId));
+    try {
+      const data = await getComments(reviewId);
+      setCommentsMap((prev) => ({ ...prev, [reviewId]: data.comments }));
+    } catch (_) {} finally {
+      setCommentsLoadingSet((prev) => { const s = new Set(prev); s.delete(reviewId); return s; });
+    }
+  };
+
+  const toggleCommentsSectionForReview = (reviewId: number) => {
+    if (openCommentsForReview === reviewId) {
+      setOpenCommentsForReview(null);
+    } else {
+      setOpenCommentsForReview(reviewId);
+      setReplyingTo(null);
+      setCommentInput("");
+      if (!commentsMap[reviewId]) loadComments(reviewId);
+    }
+  };
+
+  const handleCommentLike = async (commentId: number) => {
+    try {
+      const res = await toggleCommentLike(commentId);
+      setCommentsMap((prev) => {
+        const updated = { ...prev };
+        for (const [rid, comments] of Object.entries(updated)) {
+          updated[Number(rid)] = updateCommentLikeInTree(comments, commentId, res.like_count, res.liked);
+        }
+        return updated;
+      });
+    } catch (_) {}
+  };
+
+  const handleReply = (commentId: number, username: string) => {
+    setReplyingTo({ commentId, username });
+    setCommentInput(`@${username} `);
+  };
+
+  const submitComment = async (reviewId: number) => {
+    if (!commentInput.trim()) return;
+    setCommentSubmitting(true);
+    try {
+      await createComment(reviewId, commentInput.trim(), replyingTo?.commentId);
+      setCommentInput("");
+      setReplyingTo(null);
+      await loadComments(reviewId);
+    } catch (_) {} finally {
+      setCommentSubmitting(false);
+    }
+  };
+
   if (!fragrance) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -366,11 +471,28 @@ export default function FragranceDetailsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Rating */}
-        <View style={styles.ratingRow}>
-          <Text style={styles.ratingText}>
-            {ratingNum ? ratingNum.toFixed(2) : "—"} • {fragrance.rating_count ?? 0} ratings
-          </Text>
+        {/* Like + Wishlist row */}
+        <View style={styles.likeWishlistRow}>
+          <TouchableOpacity
+            style={[styles.iconActionBtn, fragranceLiked && styles.iconActionBtnActive]}
+            onPress={handleFragranceLike}
+            disabled={likeLoading}
+          >
+            <Ionicons name={fragranceLiked ? "heart" : "heart-outline"} size={18} color={fragranceLiked ? "#fff" : "#111"} />
+            <Text style={[styles.iconActionText, fragranceLiked && styles.iconActionTextActive]}>
+              {fragranceLiked ? "Liked" : "Like"}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.iconActionBtn, wishlisted && styles.iconActionBtnWishlist]}
+            onPress={handleWishlist}
+            disabled={wishlistLoading}
+          >
+            <Ionicons name={wishlisted ? "bookmark" : "bookmark-outline"} size={18} color={wishlisted ? "#fff" : "#111"} />
+            <Text style={[styles.iconActionText, wishlisted && styles.iconActionTextActive]}>
+              {wishlisted ? "Wishlisted" : "Wishlist"}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Notes */}
@@ -416,6 +538,9 @@ export default function FragranceDetailsScreen() {
             {fragrance.url || "—"}
           </Text>
         </View>
+
+        {/* Community Stats */}
+        <FragranceStats item={fragrance} />
 
         {/* Reviews Header */}
         <Text style={[styles.sectionTitle, { marginTop: 18 }]}>Reviews</Text>
@@ -584,7 +709,10 @@ export default function FragranceDetailsScreen() {
             {reviews.map((r) => (
               <View key={String(r.id)} style={[styles.reviewCard, r.uid === myUid && styles.reviewCardOwn]}>
                 <View style={styles.reviewCardHeader}>
-                  <Text style={styles.reviewDateText}>{formatDate(r.created_at)}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.reviewUsernameText}>{r.username}</Text>
+                    <Text style={styles.reviewDateText}>{formatDate(r.created_at)}</Text>
+                  </View>
                   <View style={styles.reviewRatingBadge}>
                     <Ionicons name="star" size={12} color="#fff" />
                     <Text style={styles.reviewRatingText}>{Number(r.rating).toFixed(1)}</Text>
@@ -620,6 +748,62 @@ export default function FragranceDetailsScreen() {
                     {r.value === "Alright" ? "Perfectly Priced" : r.value}
                   </Text>
                 </View>
+
+                {/* Like + Comments actions */}
+                <View style={styles.reviewActionRow}>
+                  <TouchableOpacity style={styles.reviewLikeBtn} onPress={() => handleReviewLike(r.id)}>
+                    <Ionicons name={r.liked ? "heart" : "heart-outline"} size={15} color={r.liked ? "#e53935" : "#888"} />
+                    <Text style={[styles.reviewLikeText, r.liked && { color: "#e53935" }]}>
+                      {r.like_count > 0 ? `${r.like_count} ` : ""}{r.liked ? "Liked" : "Like"}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.reviewCommentBtn} onPress={() => toggleCommentsSectionForReview(r.id)}>
+                    <Ionicons name="chatbubble-outline" size={15} color="#888" />
+                    <Text style={styles.reviewCommentText}>{openCommentsForReview === r.id ? "Hide" : "Comments"}</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Comments section */}
+                {openCommentsForReview === r.id && (
+                  <View style={styles.commentsSection}>
+                    {commentsLoadingSet.has(r.id) ? (
+                      <ActivityIndicator size="small" />
+                    ) : (commentsMap[r.id] ?? []).length === 0 ? (
+                      <Text style={styles.noCommentsText}>No comments yet.</Text>
+                    ) : (
+                      (commentsMap[r.id] ?? []).map((c) => (
+                        <CommentItem key={String(c.id)} comment={c} onLike={handleCommentLike} onReply={handleReply} />
+                      ))
+                    )}
+                    {replyingTo && (
+                      <View style={styles.replyingToBar}>
+                        <Text style={styles.replyingToText}>Replying to @{replyingTo.username}</Text>
+                        <TouchableOpacity onPress={() => { setReplyingTo(null); setCommentInput(""); }}>
+                          <Ionicons name="close" size={14} color="#666" />
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                    <View style={styles.commentInputRow}>
+                      <TextInput
+                        style={styles.commentInput}
+                        value={commentInput}
+                        onChangeText={setCommentInput}
+                        placeholder="Write a comment..."
+                        placeholderTextColor="#aaa"
+                        multiline
+                      />
+                      <TouchableOpacity
+                        style={[styles.commentSendBtn, commentSubmitting && { opacity: 0.6 }]}
+                        onPress={() => submitComment(r.id)}
+                        disabled={commentSubmitting}
+                      >
+                        {commentSubmitting
+                          ? <ActivityIndicator size="small" color="#fff" />
+                          : <Ionicons name="send" size={16} color="#fff" />}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
               </View>
             ))}
           </>
@@ -674,6 +858,71 @@ export default function FragranceDetailsScreen() {
     </SafeAreaView>
   );
 }
+
+function CommentItem({
+  comment,
+  onLike,
+  onReply,
+  depth = 0,
+}: {
+  comment: Comment;
+  onLike: (id: number) => void;
+  onReply: (id: number, username: string) => void;
+  depth?: number;
+}) {
+  return (
+    <View style={[commentStyles.card, depth > 0 && commentStyles.reply]}>
+      <View style={commentStyles.header}>
+        <View style={commentStyles.avatar}>
+          <Text style={commentStyles.avatarText}>{comment.author.username?.[0]?.toUpperCase() ?? "?"}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={commentStyles.username}>{comment.author.username}</Text>
+          <Text style={commentStyles.date}>{new Date(comment.created_at).toLocaleDateString()}</Text>
+        </View>
+        <TouchableOpacity style={commentStyles.likeBtn} onPress={() => onLike(comment.id)}>
+          <Ionicons name={comment.liked ? "heart" : "heart-outline"} size={14} color={comment.liked ? "#e53935" : "#888"} />
+          {comment.like_count > 0 && (
+            <Text style={[commentStyles.likeCount, comment.liked && { color: "#e53935" }]}>{comment.like_count}</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+      <Text style={commentStyles.content}>{comment.content}</Text>
+      <TouchableOpacity onPress={() => onReply(comment.id, comment.author.username)}>
+        <Text style={commentStyles.replyText}>Reply</Text>
+      </TouchableOpacity>
+      {comment.replies.length > 0 && (
+        <View style={{ marginTop: 6 }}>
+          {comment.replies.map((reply) => (
+            <CommentItem key={String(reply.id)} comment={reply} onLike={onLike} onReply={onReply} depth={depth + 1} />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function updateCommentLikeInTree(comments: Comment[], targetId: number, likeCount: number, liked: boolean): Comment[] {
+  return comments.map((c) => {
+    if (c.id === targetId) return { ...c, like_count: likeCount, liked };
+    if (c.replies.length > 0) return { ...c, replies: updateCommentLikeInTree(c.replies, targetId, likeCount, liked) };
+    return c;
+  });
+}
+
+const commentStyles = StyleSheet.create({
+  card: { backgroundColor: "#f2f2f2", borderRadius: 10, padding: 10, marginBottom: 8 },
+  reply: { marginLeft: 16, backgroundColor: "#ececec" },
+  header: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 },
+  avatar: { width: 24, height: 24, borderRadius: 999, backgroundColor: "#555", alignItems: "center", justifyContent: "center" },
+  avatarText: { color: "#fff", fontSize: 11, fontWeight: "900" },
+  username: { fontSize: 12.5, fontWeight: "800", color: "#111" },
+  date: { fontSize: 11, color: "#999" },
+  likeBtn: { flexDirection: "row", alignItems: "center", gap: 3, marginLeft: "auto" },
+  likeCount: { fontSize: 11, color: "#888", fontWeight: "700" },
+  content: { fontSize: 13, color: "#333", lineHeight: 17, marginBottom: 4 },
+  replyText: { fontSize: 12, color: "#666", fontWeight: "700" },
+});
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
@@ -840,9 +1089,31 @@ const styles = StyleSheet.create({
   reviewOccasionItem: { alignItems: "center", gap: 3 },
   reviewOccasionLabel: { fontSize: 9, color: "#ddd", fontWeight: "700" },
   reviewOccasionLabelActive: { color: "#555" },
+  reviewUsernameText: { fontSize: 13, fontWeight: "800", color: "#111", marginBottom: 1 },
   reviewMeta: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 4 },
   reviewMetaText: { fontSize: 12, color: "#777", fontWeight: "600" },
   reviewMetaDot: { fontSize: 12, color: "#bbb" },
+
+  likeWishlistRow: { flexDirection: "row", gap: 10, marginTop: 10, marginBottom: 4 },
+  iconActionBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12, backgroundColor: "#f2f2f2" },
+  iconActionBtnActive: { backgroundColor: "#e53935" },
+  iconActionBtnWishlist: { backgroundColor: "#111" },
+  iconActionText: { color: "#111", fontWeight: "700", fontSize: 13 },
+  iconActionTextActive: { color: "#fff" },
+
+  reviewActionRow: { flexDirection: "row", gap: 14, alignItems: "center", marginTop: 8 },
+  reviewLikeBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
+  reviewLikeText: { fontSize: 12.5, color: "#888", fontWeight: "700" },
+  reviewCommentBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
+  reviewCommentText: { fontSize: 12.5, color: "#888", fontWeight: "700" },
+
+  commentsSection: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#eee" },
+  noCommentsText: { color: "#aaa", fontSize: 13, marginBottom: 8 },
+  replyingToBar: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#f0f0f0", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginBottom: 6 },
+  replyingToText: { fontSize: 12, color: "#555", fontWeight: "700" },
+  commentInputRow: { flexDirection: "row", gap: 8, alignItems: "flex-end" },
+  commentInput: { flex: 1, backgroundColor: "#f2f2f2", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8, fontSize: 13.5, color: "#111", maxHeight: 80 },
+  commentSendBtn: { width: 38, height: 38, borderRadius: 999, backgroundColor: "#111", alignItems: "center", justifyContent: "center" },
 
   errorBox: {
     backgroundColor: "#fde7ea",

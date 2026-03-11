@@ -46,6 +46,11 @@ class Review(models.Model):
         on_delete=models.CASCADE,
         related_name="reviews",
     )
+    likes = models.ManyToManyField(
+        Profile,
+        blank=True,
+        related_name="liked_reviews",
+    )
     perfume = models.ForeignKey(
         Perfume,
         on_delete=models.CASCADE,
@@ -87,3 +92,38 @@ class Review(models.Model):
 
     def __str__(self):
         return f"{self.profile.username} - {self.perfume.perfume} ({self.rating})"
+
+
+class Comment(models.Model):
+    review = models.ForeignKey(
+        Review,
+        on_delete=models.CASCADE,
+        related_name="comments",
+    )
+    profile = models.ForeignKey(
+        Profile,
+        on_delete=models.CASCADE,
+        related_name="comments",
+    )
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="replies",
+    )
+    content = models.CharField(max_length=1000)
+    likes = models.ManyToManyField(
+        Profile,
+        blank=True,
+        related_name="liked_comments",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "review_comments"
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.profile.username} on review {self.review_id}: {self.content[:50]}"

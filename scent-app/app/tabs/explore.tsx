@@ -18,7 +18,9 @@ import {
   View,
 } from "react-native";
 
-import { FragranceForModal } from "@/components/fragrance-detail-modal";
+import { FragranceForModal, FragranceDetailModal } from "@/components/fragrance-detail-modal";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getFollowingDailyScents, type FollowingWithScent } from "@/lib/api";
 
 // -------------------------
 // TYPES
@@ -71,6 +73,9 @@ export default function ExploreScreen() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [followingScents, setFollowingScents] = useState<FollowingWithScent[]>([]);
+  const [selectedFragrance, setSelectedFragrance] = useState<FollowingWithScent["daily_scent"] | null>(null);
+  const [modalVisible, setModalVisible] = useState(false);
 
   // -------------------------
   // FETCH PROFILE & COLLECTION
@@ -97,6 +102,20 @@ export default function ExploreScreen() {
       setDailyScent(data.daily_scent ?? null);
     } catch (err) {
       console.log("🟥 loadDailyScent failed", err);
+    }
+  };
+
+  // -------------------------
+  // FETCH FOLLOWING DAILY SCENTS
+  // -------------------------
+  const loadFollowingScents = async () => {
+    try {
+      const token = await AsyncStorage.getItem("access_token");
+      if (!token) return;
+      const { following } = await getFollowingDailyScents(token);
+      setFollowingScents(following.filter((f) => f.daily_scent !== null));
+    } catch (err) {
+      console.log("🟥 loadFollowingScents failed", err);
     }
   };
 
@@ -129,9 +148,7 @@ export default function ExploreScreen() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      await loadProfile();
-      await loadDailyScent();
-      await loadRecommendations();
+      await Promise.all([loadProfile(), loadDailyScent(), loadRecommendations(), loadFollowingScents()]);
     } finally {
       setLoading(false);
     }
@@ -256,6 +273,47 @@ export default function ExploreScreen() {
           ListEmptyComponent={renderAddCard(() => router.push("/tabs/search"))}
         />
 
+        {/* Following Scents */}
+        <View style={{ marginHorizontal: 14, marginTop: 22, marginBottom: 12 }}>
+          <Text style={styles.sectionTitle}>Friends' Scents</Text>
+          <Text style={styles.friendSubText}>What the people you follow are wearing today</Text>
+        </View>
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          data={followingScents}
+          keyExtractor={(item) => item.uid}
+          contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 18 }}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={styles.collectionCard}
+              activeOpacity={0.9}
+              onPress={() => {
+                setSelectedFragrance(item.daily_scent);
+                setModalVisible(true);
+              }}
+            >
+              <Text style={styles.collectionName}>
+                {(item.daily_scent!.fragrance ?? "").replaceAll("-", " ")}
+              </Text>
+              <Text style={styles.collectionBrand}>
+                {(item.daily_scent!.brand ?? "").replaceAll("-", " ")}
+              </Text>
+              <View style={styles.friendBadge}>
+                <Text style={styles.friendBadgeText}>{item.username}</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+          ListEmptyComponent={
+            <View style={[styles.collectionCard, { justifyContent: "center", alignItems: "center" }]}>
+              <Text style={styles.emptyTitle}>No scents yet</Text>
+              <Text style={[styles.emptySubtitle, { textAlign: "center" }]}>
+                No one you follow has set their scent today.
+              </Text>
+            </View>
+          }
+        />
+
         {/* Collection */}
         <View style={{ marginHorizontal: 14, marginTop: 22, marginBottom: 12 }}>
           <Text style={styles.sectionTitle}>Your Collection</Text>
@@ -295,6 +353,11 @@ export default function ExploreScreen() {
         )}
       </ScrollView>
 
+      <FragranceDetailModal
+        fragrance={selectedFragrance}
+        visible={modalVisible}
+        onClose={() => { setModalVisible(false); setSelectedFragrance(null); }}
+      />
     </SafeAreaView>
   );
 }
@@ -352,4 +415,7 @@ const styles = StyleSheet.create({
 
   emptyTitle: { fontSize: 16, fontWeight: "800", color: "#111" },
   emptySubtitle: { fontSize: 13.5, color: "#666", marginTop: 6, lineHeight: 18 },
+
+  friendBadge: { marginTop: 8, backgroundColor: "#111", borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, alignSelf: "flex-start" },
+  friendBadgeText: { color: "#fff", fontSize: 11, fontWeight: "800" },
 });

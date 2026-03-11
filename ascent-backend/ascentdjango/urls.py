@@ -25,4 +25,5 @@ urlpatterns = [
     path("api/fragrances/", include("perfumes.urls")),
     path("api/reviews/", include("reviews.urls")),
     path("api/user/", include("user.urls")),
+    path("api/events/", include("events.urls")),
 ]

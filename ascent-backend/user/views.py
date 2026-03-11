@@ -14,6 +14,7 @@ from .models import Profile
 from .supabase_client import get_supabase_admin
 from helpers import _parse_json_body, _parse_json_body_optional, _get_profile_by_uid, _get_uid_from_bearer, _profile_to_dict, _fragrance_to_dict, _summarized_profiles_from_queryset
 from perfumes.views import get_day_scent_for_user
+from events.models import Event
 
 
 
@@ -213,8 +214,10 @@ def toggle_follow(request):
         return JsonResponse({"error": "Profile not found"}, status=404)
     if profile.following.filter(pk=foreign_profile.id).exists():
         profile.following.remove(foreign_profile)
+        Event.objects.create(user_id=uid, action=Event.Action.UNFOLLOW, value=str(foreign_profile.supabase_uid))
     else:
         profile.following.add(foreign_profile)
+        Event.objects.create(user_id=uid, action=Event.Action.FOLLOW, value=str(foreign_profile.supabase_uid))
     profile.save()
     following = _summarized_profiles_from_queryset(profile.following.all())
     return JsonResponse({

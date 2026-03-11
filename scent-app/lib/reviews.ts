@@ -4,6 +4,8 @@ import { http } from "@/lib/http";
 export type Review = {
   id: number;
   uid: string;
+  username: string;
+  profile_picture: string;
   fid: number;
   description: string;
   rating: number;
@@ -23,8 +25,23 @@ export type Review = {
     | "10+ hours";
   value: "Super Overpriced" | "Overpriced" | "Alright" | "Good Value" | "Super Value";
   maceration: number | null;
+  like_count: number;
+  liked: boolean;
   created_at: string;
   updated_at: string;
+};
+
+export type Comment = {
+  id: number;
+  review_id: number;
+  parent_id: number | null;
+  content: string;
+  author: { uid: string; username: string; profile_picture: string };
+  like_count: number;
+  liked: boolean;
+  created_at: string;
+  updated_at: string;
+  replies: Comment[];
 };
 
 export type ReviewsListResponse = {
@@ -71,4 +88,26 @@ export async function updateReview(reviewId: number, payload: UpdateReviewPayloa
 
 export async function deleteReview(reviewId: number): Promise<void> {
   await http.delete(`/api/reviews/delete/${reviewId}/`);
+}
+
+export async function toggleReviewLike(reviewId: number): Promise<{ review_id: number; like_count: number; liked: boolean }> {
+  const res = await http.post("/api/reviews/likes/toggle/", { review_id: reviewId });
+  return res.data;
+}
+
+export async function getComments(reviewId: number): Promise<{ comments: Comment[] }> {
+  const res = await http.get("/api/reviews/comments/", { params: { review_id: reviewId } });
+  return res.data;
+}
+
+export async function createComment(reviewId: number, content: string, parentId?: number): Promise<Comment> {
+  const body: { review_id: number; content: string; parent_id?: number } = { review_id: reviewId, content };
+  if (parentId != null) body.parent_id = parentId;
+  const res = await http.post("/api/reviews/comments/create/", body);
+  return res.data;
+}
+
+export async function toggleCommentLike(commentId: number): Promise<{ comment_id: number; like_count: number; liked: boolean }> {
+  const res = await http.post("/api/reviews/comments/likes/toggle/", { comment_id: commentId });
+  return res.data;
 }
