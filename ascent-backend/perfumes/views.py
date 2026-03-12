@@ -211,36 +211,7 @@ def fragrance_get(request):
     except Perfume.DoesNotExist:
         return JsonResponse({"error": "Fragrance not found"}, status=404)
     
-    if fragrance.updated_at < timezone.now() - timedelta(days=3):
-        reviews = fragrance.reviews.all()
-        fragrance.rating_value = reviews.aggregate(Avg("rating"))["rating__avg"]
-        fragrance.rating_count = len(reviews)
-        fragrance.summer_count = reviews.filter(summer=True).count()
-        fragrance.winter_count = reviews.filter(winter=True).count()
-        fragrance.day_count = reviews.filter(day=True).count()
-        fragrance.night_count = reviews.filter(night=True).count()
-        fragrance.light_sillage_count = reviews.filter(sillage=Review.Sillage.LIGHT_SILLAGE).count()
-        fragrance.moderate_sillage_count = reviews.filter(sillage=Review.Sillage.MODERATE_SILLAGE).count()
-        fragrance.strong_sillage_count = reviews.filter(sillage=Review.Sillage.STRONG_SILLAGE).count()
-        fragrance.no_sillage_count = reviews.filter(sillage=Review.Sillage.NO_SILLAGE).count()
-        fragrance.h0_2_longevity_count = reviews.filter(longevity=Review.Longevity.H0_2).count()
-        fragrance.h2_4_longevity_count = reviews.filter(longevity=Review.Longevity.H2_4).count()
-        fragrance.h4_6_longevity_count = reviews.filter(longevity=Review.Longevity.H4_6).count()
-        fragrance.h6_8_longevity_count = reviews.filter(longevity=Review.Longevity.H6_8).count()
-        fragrance.h8_10_longevity_count = reviews.filter(longevity=Review.Longevity.H8_10).count()
-        fragrance.h10_plus_longevity_count = reviews.filter(longevity=Review.Longevity.H10_PLUS).count()
-        fragrance.super_overpriced_value_count = reviews.filter(value=Review.Value.SUPER_OVERPRICED).count()
-        fragrance.overpriced_value_count = reviews.filter(value=Review.Value.OVERPRICED).count()
-        fragrance.alright_value_count = reviews.filter(value=Review.Value.ALRIGHT).count()
-        fragrance.good_value_count = reviews.filter(value=Review.Value.GOOD_VALUE).count()
-        fragrance.super_value_count = reviews.filter(value=Review.Value.SUPER_VALUE).count()
-        fragrance.gender_female_count = reviews.filter(gender=Review.Gender.FEMALE).count()
-        fragrance.gender_slightly_female_count = reviews.filter(gender=Review.Gender.SLIGHTLY_FEMALE).count()
-        fragrance.gender_unisex_count = reviews.filter(gender=Review.Gender.UNISEX).count()
-        fragrance.gender_slightly_male_count = reviews.filter(gender=Review.Gender.SLIGHTLY_MALE).count()
-        fragrance.gender_male_count = reviews.filter(gender=Review.Gender.MALE).count()
-        fragrance.maceration_average = reviews.filter(maceration__isnull=False).aggregate(Avg("maceration"))["maceration__avg"]
-        fragrance.save()
+    
 
 
     return JsonResponse(_fragrance_to_dict(fragrance), status=200)

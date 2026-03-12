@@ -4,8 +4,44 @@ from django.http import JsonResponse
 from user.models import Profile
 from user.supabase_client import get_supabase_admin
 import uuid
+from django.utils import timezone
+from datetime import timedelta
+from django.db.models import Avg
+from reviews.models import Review
 
 def _fragrance_to_dict(instance):
+    if instance.updated_at < timezone.now() - timedelta(days=0):
+        reviews = instance.reviews.all()
+        instance.rating_value = reviews.aggregate(Avg("rating"))["rating__avg"]
+        instance.rating_count = len(reviews)
+        instance.summer_count = reviews.filter(summer=True).count()
+        instance.winter_count = reviews.filter(winter=True).count()
+        instance.spring_count = reviews.filter(spring=True).count()
+        instance.autumn_count = reviews.filter(autumn=True).count()
+        instance.day_count = reviews.filter(day=True).count()
+        instance.night_count = reviews.filter(night=True).count()
+        instance.light_sillage_count = reviews.filter(sillage=Review.Sillage.LIGHT_SILLAGE).count()
+        instance.moderate_sillage_count = reviews.filter(sillage=Review.Sillage.MODERATE_SILLAGE).count()
+        instance.strong_sillage_count = reviews.filter(sillage=Review.Sillage.STRONG_SILLAGE).count()
+        instance.no_sillage_count = reviews.filter(sillage=Review.Sillage.NO_SILLAGE).count()
+        instance.h0_2_longevity_count = reviews.filter(longevity=Review.Longevity.H0_2).count()
+        instance.h2_4_longevity_count = reviews.filter(longevity=Review.Longevity.H2_4).count()
+        instance.h4_6_longevity_count = reviews.filter(longevity=Review.Longevity.H4_6).count()
+        instance.h6_8_longevity_count = reviews.filter(longevity=Review.Longevity.H6_8).count()
+        instance.h8_10_longevity_count = reviews.filter(longevity=Review.Longevity.H8_10).count()
+        instance.h10_plus_longevity_count = reviews.filter(longevity=Review.Longevity.H10_PLUS).count()
+        instance.super_overpriced_value_count = reviews.filter(value=Review.Value.SUPER_OVERPRICED).count()
+        instance.overpriced_value_count = reviews.filter(value=Review.Value.OVERPRICED).count()
+        instance.alright_value_count = reviews.filter(value=Review.Value.ALRIGHT).count()
+        instance.good_value_count = reviews.filter(value=Review.Value.GOOD_VALUE).count()
+        instance.super_value_count = reviews.filter(value=Review.Value.SUPER_VALUE).count()
+        instance.gender_female_count = reviews.filter(gender=Review.Gender.FEMALE).count()
+        instance.gender_slightly_female_count = reviews.filter(gender=Review.Gender.SLIGHTLY_FEMALE).count()
+        instance.gender_unisex_count = reviews.filter(gender=Review.Gender.UNISEX).count()
+        instance.gender_slightly_male_count = reviews.filter(gender=Review.Gender.SLIGHTLY_MALE).count()
+        instance.gender_male_count = reviews.filter(gender=Review.Gender.MALE).count()
+        instance.maceration_average = reviews.filter(maceration__isnull=False).aggregate(Avg("maceration"))["maceration__avg"]
+        instance.save()
     return {
         "id": instance.id,
         "url": instance.url,
@@ -28,6 +64,8 @@ def _fragrance_to_dict(instance):
         "mainaccord5": instance.mainaccord5,
         "summer_count": instance.summer_count,
         "winter_count": instance.winter_count,
+        "spring_count": instance.spring_count,
+        "autumn_count": instance.autumn_count,
         "day_count": instance.day_count,
         "night_count": instance.night_count,
         "light_sillage_count": instance.light_sillage_count,
@@ -164,6 +202,8 @@ def _recalculate_fragrance_stats(perfume):
     # Season / occasion
     perfume.summer_count = reviews.filter(summer=True).count()
     perfume.winter_count = reviews.filter(winter=True).count()
+    perfume.spring_count = reviews.filter(spring=True).count()
+    perfume.autumn_count = reviews.filter(autumn=True).count()
     perfume.day_count    = reviews.filter(day=True).count()
     perfume.night_count  = reviews.filter(night=True).count()
 

@@ -167,6 +167,14 @@ export function FragranceDetailModal({
   const [reviewGender, setReviewGender] = useState<Review["gender"]>("Unisex");
   const [reviewLongevity, setReviewLongevity] = useState<Review["longevity"]>("6 - 8 hours");
   const [reviewValue, setReviewValue] = useState<Review["value"]>("Alright");
+  const [reviewSillage, setReviewSillage] = useState<Review["sillage"]>(null);
+  const [reviewMaceration, setReviewMaceration] = useState("");
+  const [reviewSpring, setReviewSpring] = useState(false);
+  const [reviewSummer, setReviewSummer] = useState(false);
+  const [reviewAutumn, setReviewAutumn] = useState(false);
+  const [reviewWinter, setReviewWinter] = useState(false);
+  const [reviewDay, setReviewDay] = useState(false);
+  const [reviewNight, setReviewNight] = useState(false);
 
   function resetReviewForm() {
     setReviewDescription("");
@@ -174,6 +182,14 @@ export function FragranceDetailModal({
     setReviewGender("Unisex");
     setReviewLongevity("6 - 8 hours");
     setReviewValue("Alright");
+    setReviewSillage(null);
+    setReviewMaceration("");
+    setReviewSpring(false);
+    setReviewSummer(false);
+    setReviewAutumn(false);
+    setReviewWinter(false);
+    setReviewDay(false);
+    setReviewNight(false);
     setReviewError(null);
   }
 
@@ -184,6 +200,10 @@ export function FragranceDetailModal({
     if (!reviewDescription.trim()) { setReviewError("Description is required."); return; }
     if (!Number.isFinite(ratingNum)) { setReviewError("Rating must be a number."); return; }
     if (ratingNum < 0 || ratingNum > 10) { setReviewError("Rating must be between 0 and 10."); return; }
+    const macNum = reviewMaceration.trim() ? Number(reviewMaceration.trim()) : null;
+    if (macNum !== null && (!Number.isInteger(macNum) || macNum < 0)) {
+      setReviewError("Maceration must be a non-negative whole number."); return;
+    }
     setReviewLoading(true);
     try {
       await createReview({
@@ -193,6 +213,14 @@ export function FragranceDetailModal({
         gender: reviewGender,
         longevity: reviewLongevity,
         value: reviewValue,
+        sillage: reviewSillage,
+        maceration: macNum,
+        spring: reviewSpring,
+        summer: reviewSummer,
+        autumn: reviewAutumn,
+        winter: reviewWinter,
+        day: reviewDay,
+        night: reviewNight,
       });
       setWriteReviewOpen(false);
       resetReviewForm();
@@ -556,6 +584,39 @@ export function FragranceDetailModal({
                   </TouchableOpacity>
                 ))}
               </View>
+              <Text style={styles.formLabel}>Sillage</Text>
+              <View style={styles.chipRow}>
+                {(["No Sillage", "Light Sillage", "Moderate Sillage", "Strong Sillage"] as NonNullable<Review["sillage"]>[]).map((s) => (
+                  <TouchableOpacity key={s} style={[styles.chip, reviewSillage === s && styles.chipActive]} onPress={() => setReviewSillage(reviewSillage === s ? null : s)}>
+                    <Text style={[styles.chipText, reviewSillage === s && styles.chipTextActive]}>{s}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.formLabel}>Maceration (weeks, optional)</Text>
+              <TextInput
+                style={styles.textField}
+                value={reviewMaceration}
+                onChangeText={setReviewMaceration}
+                keyboardType="number-pad"
+                placeholder="e.g. 4"
+                placeholderTextColor="#aaa"
+              />
+              <Text style={styles.formLabel}>Season</Text>
+              <View style={styles.chipRow}>
+                {([["🌸 Spring", reviewSpring, setReviewSpring], ["☀️ Summer", reviewSummer, setReviewSummer], ["🍂 Autumn", reviewAutumn, setReviewAutumn], ["❄️ Winter", reviewWinter, setReviewWinter]] as [string, boolean, (v: boolean) => void][]).map(([label, active, setter]) => (
+                  <TouchableOpacity key={label} style={[styles.chip, active && styles.chipActive]} onPress={() => setter(!active)}>
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.formLabel}>Occasion</Text>
+              <View style={styles.chipRow}>
+                {([["🌞 Day", reviewDay, setReviewDay], ["🌙 Night", reviewNight, setReviewNight]] as [string, boolean, (v: boolean) => void][]).map(([label, active, setter]) => (
+                  <TouchableOpacity key={label} style={[styles.chip, active && styles.chipActive]} onPress={() => setter(!active)}>
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
               {reviewError && <Text style={styles.errorText}>{reviewError}</Text>}
               <View style={styles.formActions}>
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => { setWriteReviewOpen(false); resetReviewForm(); }}>
@@ -598,7 +659,11 @@ export function FragranceDetailModal({
                       </View>
                       <View>
                         <Text style={styles.reviewUsernameText}>{r.username}</Text>
-                        <Text style={styles.reviewMetaText}>{r.gender} • {r.longevity} • {r.value}</Text>
+                        <Text style={styles.reviewMetaText}>
+                          {r.gender} • {r.longevity} • {r.value}
+                          {r.sillage ? ` • ${r.sillage}` : ""}
+                          {r.maceration != null ? ` • ${r.maceration}wk mac` : ""}
+                        </Text>
                         <Text style={styles.reviewDateText}>{formatDate(r.created_at)}</Text>
                       </View>
                     </View>

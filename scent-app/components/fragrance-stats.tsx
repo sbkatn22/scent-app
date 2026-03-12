@@ -53,11 +53,16 @@ function StatPill({ label, value }: { label: string; value: string }) {
 
 export function FragranceStats({ item }: { item: FragranceApiItem }) {
   // Season
+  const springC  = item.spring_count  ?? 0;
   const summerC  = item.summer_count  ?? 0;
+  const autumnC  = item.autumn_count  ?? 0;
   const winterC  = item.winter_count  ?? 0;
+  const seasonTotal = springC + summerC + autumnC + winterC;
+
+  // Occasion
   const dayC     = item.day_count     ?? 0;
   const nightC   = item.night_count   ?? 0;
-  const seasonTotal = summerC + winterC + dayC + nightC;
+  const occasionTotal = dayC + nightC;
 
   // Sillage
   const noSil     = item.no_sillage_count       ?? 0;
@@ -91,7 +96,7 @@ export function FragranceStats({ item }: { item: FragranceApiItem }) {
   const male     = item.gender_male_count            ?? 0;
   const genderTotal = female + slFemale + unisex + slMale + male;
 
-  const hasAnyStats = seasonTotal + sillageTotal + longevityTotal + valueTotal + genderTotal > 0;
+  const hasAnyStats = seasonTotal + occasionTotal + sillageTotal + longevityTotal + valueTotal + genderTotal > 0;
 
   return (
     <View>
@@ -122,13 +127,21 @@ export function FragranceStats({ item }: { item: FragranceApiItem }) {
         </View>
       ) : (
         <>
-          {/* Season & Occasion */}
+          {/* Season */}
           {seasonTotal > 0 && (
-            <StatGroup title="Season & Occasion">
-              <StatBar label="Summer" count={summerC}  total={seasonTotal} color="#f59e0b" />
-              <StatBar label="Winter" count={winterC}  total={seasonTotal} color="#60a5fa" />
-              <StatBar label="Day"    count={dayC}     total={seasonTotal} color="#fbbf24" />
-              <StatBar label="Night"  count={nightC}   total={seasonTotal} color="#818cf8" />
+            <StatGroup title="Season">
+              <StatBar label="🌸 Spring" count={springC} total={seasonTotal} color="#f9a8d4" />
+              <StatBar label="☀️ Summer" count={summerC} total={seasonTotal} color="#f59e0b" />
+              <StatBar label="🍂 Autumn" count={autumnC} total={seasonTotal} color="#ea580c" />
+              <StatBar label="❄️ Winter" count={winterC} total={seasonTotal} color="#60a5fa" />
+            </StatGroup>
+          )}
+
+          {/* Occasion */}
+          {occasionTotal > 0 && (
+            <StatGroup title="Occasion">
+              <StatBar label="🌞 Day"   count={dayC}   total={occasionTotal} color="#fbbf24" />
+              <StatBar label="🌙 Night" count={nightC} total={occasionTotal} color="#818cf8" />
             </StatGroup>
           )}
 

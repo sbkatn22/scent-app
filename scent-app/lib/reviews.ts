@@ -25,6 +25,7 @@ export type Review = {
     | "10+ hours";
   value: "Super Overpriced" | "Overpriced" | "Alright" | "Good Value" | "Super Value";
   maceration: number | null;
+  sillage: "No Sillage" | "Light Sillage" | "Moderate Sillage" | "Strong Sillage" | null;
   like_count: number;
   liked: boolean;
   created_at: string;
@@ -62,6 +63,8 @@ export type CreateReviewPayload = {
   autumn?: boolean;
   day?: boolean;
   night?: boolean;
+  maceration?: number | null;
+  sillage?: Review["sillage"];
 };
 
 export async function createReview(payload: CreateReviewPayload): Promise<Review> {

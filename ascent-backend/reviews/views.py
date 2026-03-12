@@ -34,6 +34,8 @@ def _recalculate_perfume_stats(perfume):
     # Season / occasion
     perfume.summer_count = reviews.filter(summer=True).count()
     perfume.winter_count = reviews.filter(winter=True).count()
+    perfume.spring_count = reviews.filter(spring=True).count()
+    perfume.autumn_count = reviews.filter(autumn=True).count()
     perfume.day_count    = reviews.filter(day=True).count()
     perfume.night_count  = reviews.filter(night=True).count()
 
@@ -98,6 +100,7 @@ def _review_to_dict(instance, profile=None, liked_review_ids=None):
         "longevity": instance.longevity,
         "value": instance.value,
         "maceration": instance.maceration,
+        "sillage": instance.sillage,
         "like_count": instance.likes.count(),
         "liked": liked,
         "created_at": instance.created_at.isoformat(),
@@ -295,6 +298,15 @@ def review_create(request):
                 status=400,
             )
 
+    sillage = body.get("sillage")
+    if sillage is not None:
+        sillage = str(sillage).strip()
+        if sillage not in Review.Sillage.values:
+            return JsonResponse(
+                {"error": "Invalid sillage value", "allowed": list(Review.Sillage.values)},
+                status=400,
+            )
+
     review = Review.objects.create(
         profile=profile,
         perfume=perfume,
@@ -310,6 +322,7 @@ def review_create(request):
         longevity=longevity,
         value=value,
         maceration=maceration,
+        sillage=sillage,
     )
 
     Event.objects.create(user_id=uid_raw, action=Event.Action.REVIEW_CREATE, value=str(perfume.id))
@@ -405,6 +418,14 @@ def review_update(request, review_id):
             except (TypeError, ValueError):
                 return JsonResponse({"error": "Maceration must be a non-negative integer if provided"}, status=400)
         review.maceration = maceration
+
+    if "sillage" in body:
+        sillage = body["sillage"]
+        if sillage is not None:
+            sillage = str(sillage).strip()
+            if sillage not in Review.Sillage.values:
+                return JsonResponse({"error": "Invalid sillage value", "allowed": list(Review.Sillage.values)}, status=400)
+        review.sillage = sillage
 
     review.save()
     Event.objects.create(user_id=uid_raw, action=Event.Action.REVIEW_UPDATE, value=str(review.perfume.id))

@@ -88,6 +88,8 @@ export type FragranceApiItem = {
   // Community stats
   summer_count?: number;
   winter_count?: number;
+  spring_count?: number;
+  autumn_count?: number;
   day_count?: number;
   night_count?: number;
 
